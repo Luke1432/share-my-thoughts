@@ -1,0 +1,123 @@
+* {
+    background: #E6D8C1
+}
+
+.navigation {
+    display: flex;
+    margin-bottom: 20px;
+}
+
+.page {
+    display: none;
+    padding: 20px;
+}
+
+.page.active {
+    display: block;
+}
+
+.thought-item {
+    border: 1px solid #b8a688;
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 15px;
+}
+
+.meta {
+    font-size: 0.85em;
+    color: #6b5a40;
+}
+
+.comments {
+    margin-left: 20px;
+    padding-left: 10px;
+    border-left: 2px solid #b8a688;
+}
+
+.comment-item {
+    margin-bottom: 8px;
+}
+
+.comment-item p,
+.thought-item p {
+    margin: 4px 0;
+}
+
+/* Pop-up that covers the page until you enter your name */
+.overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+}
+
+.overlay * {
+    background: transparent;
+}
+
+.overlay-box {
+    background: #E6D8C1;
+    padding: 30px;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.overlay-box input,
+.overlay-box button {
+    background: white;
+}
+
+/* Drafts get a dashed border so they look different from shared posts */
+.draft-item {
+    border: 1px dashed #b8a688;
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 10px;
+}
+
+.draft-item p {
+    margin: 4px 0;
+}
+
+.hint {
+    font-size: 0.85em;
+    color: #6b5a40;
+}
+
+/* The title + text box for writing a post or draft */
+.composer {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 600px;
+}
+
+.composer textarea {
+    font: inherit;
+    resize: vertical;
+}
+
+.editing-note {
+    font-size: 0.85em;
+    color: #6b5a40;
+    margin: 0;
+}
+
+.thought-item h3,
+.draft-item h4 {
+    margin: 4px 0;
+}
+
+/* The draft that's currently open in the writing box */
+.draft-item.editing {
+    border-style: solid;
+    border-width: 2px;
+}
+
+.overlay-box input {
+    display: block;
+    margin: 8px auto;
+}

@@ -1,0 +1,135 @@
+// Security rules for the Firestore database.
+// These run on Google's servers, so (unlike script.js) nobody can change or skip them.
+// To use them: Firebase console -> Firestore Database -> Rules -> paste this whole file -> Publish.
+//
+// Everyone signs in with their name and the group password. Each name is its
+// own Firebase account, so request.auth.uid tells the rules who is asking.
+// Only accounts that proved they know the group password (by saving it in
+// members/{userId}) can read or write anything.
+//
+// The group password lives in config/group -> { password }. Set it in the
+// Firebase console. No rule below matches config, so nobody can read it from
+// the website; the rules can still look at it with get().
+//
+// Database layout:
+//   config/group                             -> { password }
+//   members/{userId}                         -> { name, groupPassword }
+//   users/{userId}/drafts/{draftId}          -> { section, title, text, updatedAt }
+//   thoughts/{postId}                        -> { userId, name, title, text, createdAt }
+//   accomplishments/{postId}                 -> same as thoughts
+//   {thoughts|accomplishments}/{postId}/comments/{commentId} -> { userId, name, text, createdAt }
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // The pages that hold shared posts. Add a name here when you give
+    // another page (e.g. 'goals') a post section.
+    function isPostSection(section) {
+      return section in ['thoughts', 'accomplishments'];
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function groupPassword() {
+      return get(/databases/$(database)/documents/config/group).data.password;
+    }
+
+    function memberPath() {
+      return /databases/$(database)/documents/members/$(request.auth.uid);
+    }
+
+    // Signed in and has entered the right group password
+    function isMember() {
+      return isSignedIn() && exists(memberPath());
+    }
+
+    // True if the person asking is a member with this user ID
+    function isUser(userId) {
+      return isMember() && request.auth.uid == userId;
+    }
+
+    function isValidText(text) {
+      return text is string && text.size() > 0 && text.size() <= 2000;
+    }
+
+    // Titles are optional, so an empty title is fine
+    function isValidTitle(title) {
+      return title is string && title.size() <= 150;
+    }
+
+    // A new post or comment must be saved under your own user ID and the name
+    // you signed in with, have some text, and use the server's time (so nobody
+    // can fake the date)
+    function isValidNewEntry(data) {
+      return isUser(data.userId)
+        && data.name == get(memberPath()).data.name
+        && isValidText(data.text)
+        && data.createdAt == request.time;
+    }
+
+    function isValidNewPost() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['userId', 'name', 'title', 'text', 'createdAt'])
+        && isValidTitle(data.title)
+        && isValidNewEntry(data);
+    }
+
+    function isValidNewComment() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['userId', 'name', 'text', 'createdAt'])
+        && isValidNewEntry(data);
+    }
+
+    // Only the author can edit, and only the title and text
+    function isValidEdit() {
+      return isUser(resource.data.userId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'text'])
+        && isValidText(request.resource.data.text)
+        && isValidTitle(request.resource.data.get('title', ''));
+    }
+
+    function isValidDraft() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['section', 'title', 'text', 'updatedAt'])
+        && isPostSection(data.section)
+        && isValidTitle(data.title)
+        && isValidText(data.text)
+        && data.updatedAt == request.time;
+    }
+
+    // Signing in saves your name here, which only works with the right group password
+    match /members/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create, update: if isSignedIn() && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['name', 'groupPassword'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 30
+        && request.resource.data.groupPassword == groupPassword();
+    }
+
+    // Drafts: only you can see, save or delete your own
+    match /users/{userId}/drafts/{draftId} {
+      allow read, delete: if isUser(userId);
+      allow create, update: if isUser(userId) && isValidDraft();
+    }
+
+    // Posts: any member can read them, only the author can delete them
+    match /{section}/{postId} {
+      allow read: if isPostSection(section) && isMember();
+      allow create: if isPostSection(section) && isValidNewPost();
+      allow update: if isPostSection(section) && isValidEdit();
+      allow delete: if isPostSection(section) && isUser(resource.data.userId);
+
+      match /comments/{commentId} {
+        allow read: if isPostSection(section) && isMember();
+        allow create: if isPostSection(section) && isValidNewComment();
+        allow update: if isPostSection(section) && isValidEdit();
+        allow delete: if isPostSection(section) && isUser(resource.data.userId);
+      }
+    }
+  }
+}

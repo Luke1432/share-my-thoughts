@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<head>
+    <title>Share my thoughts</title>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="style.css">
+    <!-- type="module" lets script.js import Firebase (modules are deferred automatically) -->
+    <script type="module" src="script.js"></script>
+</head>
+<body>
+    <div id="sign-in-overlay" class="overlay">
+        <div class="overlay-box">
+            <h2>Welcome!</h2>
+            <p>Enter your name and the group password.</p>
+            <p class="hint">Use the same name on every device to see your posts and drafts.</p>
+            <input type="text" id="name-input" placeholder="Your name" maxlength="30" autocomplete="username">
+            <input type="password" id="password-input" placeholder="Group password" autocomplete="current-password">
+            <button id="sign-in">Sign in</button>
+        </div>
+    </div>
+    <header>
+        <span class="icon-wrapper">
+            <i class="fas fa-lock"></i>
+        </span>
+        <h1>Share my thoughts</h1>
+        <nav>
+            <button data-page="intro">Home</button>
+            <button data-page="thoughts">Thoughts</button>
+            <button data-page="goals">Goals</button>
+            <button data-page="accomplishments">Accomplishments</button>
+        </nav>
+        <p id="greeting"></p>
+        <button id="sign-out" hidden>Sign out</button>
+    </header>
+    <main>
+        <div id="intro" class="page active">
+            <h2>Welcome to Share my thoughts!</h2>
+            <p>I created this page as a place to put some of my thoughts, things I am dealing with currently and goals that I have, and thought to expand it into somewhere we could keep ideas for hangouts and for everyone to share what they're struggling with or things they're proud of. I'm not sure if this is something y'all want so feel free to ignore it but I thought it might be nice. </p>
+            <p>I also wanted to work on a project without AI, because I feel like I rely on it too much now. This is my way of doing that, developing my skills in JavaScript and web development. </p> 
+        </div>
+        <div id="thoughts" class="page">
+            <h2>Thoughts</h2>
+            <p>Here is somewhere you can enter whatever thoughts you would like to share with the gang. I'll try to figure out a draft/privacy feature so you can write them out and only share once you're ready or whenever you're comfortable with it. </p>
+            <div class="composer">
+                <p id="thought-editing" class="editing-note" hidden>
+                    Editing a saved draft. "Save draft" updates it, "Post" shares it.
+                    <button id="thought-stop-editing">Stop editing</button>
+                </p>
+                <input type="text" id="thought-title" placeholder="Title (optional)" maxlength="150">
+                <textarea id="thought-input" placeholder="Share thoughts here" rows="5" maxlength="2000"></textarea>
+                <div>
+                    <button id="thought-submit">Post</button>
+                    <button id="thought-save-draft">Save draft</button>
+                </div>
+            </div>
+            <div id="thought-drafts" class="drafts-list"></div>
+            <div id="thoughts-list"></div>
+        </div> 
+        <div id="goals" class="page">
+            <h2>Goals</h2>
+            <p>Here, you can share some goals that you're currently working on or would like to start working on. If you would like, we can offer assistance in achieving that goal, in terms of check-ins and such when we talk. I think this is also a good way to keep each other accountable and motivated. </p>
+        </div>
+        <div id="accomplishments" class="page">
+            <h2>Accomplishments and Other</h2>
+            <p>I thought it would be nice to have a place to share things you have accomplished that you are proud of, whether small or big. You can also add pictures or anything that makes you happy :)</p>
+            <div class="composer">
+                <p id="accomplishment-editing" class="editing-note" hidden>
+                    Editing a saved draft. "Save draft" updates it, "Post" shares it.
+                    <button id="accomplishment-stop-editing">Stop editing</button>
+                </p>
+                <input type="text" id="accomplishment-title" placeholder="Title (optional)" maxlength="150">
+                <textarea id="accomplishment-input" placeholder="Share an accomplishment here" rows="5" maxlength="2000"></textarea>
+                <div>
+                    <button id="accomplishment-submit">Post</button>
+                    <button id="accomplishment-save-draft">Save draft</button>
+                </div>
+            </div>
+            <div id="accomplishment-drafts" class="drafts-list"></div>
+            <div id="accomplishments-list"></div>
+        </div>
+        <div id="group-activities" class="page">
+            <h2>Group Activities</h2>
+            <p>Here, you can share some ideas for things you want to do as a group, whether it be a project or an activity, wherever it is. </p>
+        </div>
+    </main>
+</html>
