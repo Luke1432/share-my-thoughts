@@ -455,6 +455,7 @@ function listenToPosts(section) {
       const nextItem = section.list.children[change.newIndex] || null;
       section.list.insertBefore(items.get(id).element, nextItem);
     });
+    updatePostsHeading(section);
   });
 
   return () => {
@@ -553,8 +554,15 @@ function renderDrafts(section) {
 
   if (section.drafts.length > 0) {
     const heading = document.createElement("h3");
-    heading.textContent = `Your drafts (${section.drafts.length}, only you can see these)`;
+    heading.textContent = `Your drafts (only you can see these, currently ${section.drafts.length})`;
     section.draftsList.prepend(heading);
+  }
+}
+
+// Only show the "Posts" heading when there's at least one post
+function updatePostsHeading(section) {
+  if (section.postsHeading) {
+    section.postsHeading.hidden = !section.list || section.list.children.length === 0;
   }
 }
 
@@ -731,6 +739,7 @@ function setupPostSection(section) {
   section.editingNote = document.getElementById(`${prefix}-editing`);
   section.draftsList = document.getElementById(`${prefix}-drafts`);
   section.list = document.getElementById(`${section.collection}-list`);
+  section.postsHeading = document.getElementById(`${section.collection}-heading`);
   const submitButton = document.getElementById(`${prefix}-submit`);
   const saveDraftButton = document.getElementById(`${prefix}-save-draft`);
   const stopEditingButton = document.getElementById(`${prefix}-stop-editing`);
@@ -826,6 +835,7 @@ function stopListening() {
     if (section.list) {
       section.list.replaceChildren();
     }
+    updatePostsHeading(section);
     section.drafts = [];
     if (section.draftsList) {
       section.draftsList.replaceChildren();
