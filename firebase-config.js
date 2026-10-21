@@ -5,10 +5,10 @@
 // It's fine for these values to be public (anyone can see them in the browser).
 // What keeps the data safe is the security rules in firestore.rules.
 export const firebaseConfig = {
-  apiKey: "PASTE_YOUR_API_KEY",
-  authDomain: "PASTE_YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "PASTE_YOUR_PROJECT_ID",
-  storageBucket: "PASTE_YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "PASTE_YOUR_SENDER_ID",
-  appId: "PASTE_YOUR_APP_ID"
+apiKey: "AIzaSyDLca_ojcHDl9eSnL8pp-B-D0Co5Yx6OsQ",
+  authDomain: "thoughts-discussion.firebaseapp.com",
+  projectId: "thoughts-discussion",
+  storageBucket: "thoughts-discussion.firebasestorage.app",
+  messagingSenderId: "234546911005",
+  appId: "1:234546911005:web:8837e1d8aab37af7b0f3f4",
 };

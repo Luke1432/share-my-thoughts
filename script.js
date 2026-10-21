@@ -2,8 +2,8 @@
 // what lets it import Firebase straight from Google's CDN without a build step
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
-  getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  deleteUser, onAuthStateChanged, signOut
+  getAuth, signInWithEmailAndPassword,
+  onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
   getFirestore, collection, doc, addDoc, setDoc, getDoc, deleteDoc,
@@ -56,13 +56,10 @@ async function tryTo(description, action) {
 }
 
 // ---------- Sign in ----------
-// You sign in with your name and the group password. Behind the scenes each
+// You sign in with your name and your own password. Behind the scenes each
 // name gets its own Firebase account (the name is turned into a made-up email
-// address, and the group password is its password), so the database rules can
+// address), so the database rules can
 // tell who's who: only you can read your drafts or delete your posts.
-//
-// The group password itself is checked by the database rules against
-// config/group in Firestore, which nobody can read from the website.
 
 const signInOverlay = document.getElementById('sign-in-overlay');
 const nameInput = document.getElementById('name-input');
@@ -76,61 +73,64 @@ const greeting = document.getElementById('greeting');
 let signingIn = false;
 
 // Turns a name into the made-up email for its account. Lowercase so "Lukas"
-// and "lukas" are the same person, and written as hex digits so any
-// characters (spaces, accents, emoji) make a valid email address.
+// and "lukas" are the same person, and keep it readable so admins can
+// pre-create accounts like "lukas@sharemythoughts.example".
 // No emails are ever sent to it.
 function nameToEmail(name) {
-  const bytes = new TextEncoder().encode(name.toLowerCase());
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-  return `${hex}@sharemythoughts.example`;
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  const localPart = normalized
+    .replace(/[^a-z0-9._-]+/g, '.')
+    .replace(/\.+/g, '.')
+    .replace(/^\.|\.$/g, '');
+
+  if (localPart === '') {
+    throw new Error('Please use a name with letters or numbers.');
+  }
+
+  return `${localPart}@sharemythoughts.example`;
 }
 
-// Signs in to this name's account, creating it the first time the name is used
+// Signs in to a pre-created account for this name.
+// Account creation is intentionally disabled in the client.
 async function signInWithName(name, password) {
   const email = nameToEmail(name);
-  let isNewAccount = false;
-
   try {
     await signInWithEmailAndPassword(auth, email, password);
   } catch (error) {
-    // Firebase gives the same error for "no such account" and "wrong
-    // password", so try making the account to find out which it was
-    try {
-      await createUserWithEmailAndPassword(auth, email, password);
-      isNewAccount = true;
-    } catch (createError) {
-      if (createError.code === 'auth/email-already-in-use') {
-        throw new Error('Wrong group password.');
-      }
-      if (createError.code === 'auth/weak-password') {
-        throw new Error('Wrong group password.');
-      }
-      throw createError;
+    if (error.code === 'auth/user-not-found') {
+      throw new Error('This name is not approved yet. Ask the admin to add your account.');
     }
+    if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+      throw new Error('Wrong password.');
+    }
+    throw error;
   }
 
-  // Saving your name to members/{userId} is where the rules check the group
-  // password. If it's wrong, undo everything so no account is left behind.
+  // Save your display name so posts and comments can show it.
   try {
     await setDoc(doc(db, 'members', auth.currentUser.uid), {
-      name: name,
-      groupPassword: password
+      name: name
     });
   } catch (error) {
-    if (isNewAccount) {
-      await deleteUser(auth.currentUser);
-    } else {
-      await signOut(auth);
-    }
-    throw new Error('Wrong group password.');
+    await signOut(auth);
+    throw new Error('Could not finish sign-in permissions setup.');
   }
 }
 
 function signIn() {
+  if (!nameInput || !passwordInput || !signInButton) {
+    return;
+  }
+
   const name = nameInput.value.trim();
   const password = passwordInput.value;
   if (name === '' || password === '') {
-    alert('Please enter your name and the group password.');
+    alert('Please enter your name and password.');
     return;
   }
   if (name.length > 30) {
@@ -150,16 +150,23 @@ function signIn() {
   });
 }
 
-signInButton.addEventListener('click', signIn);
-passwordInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    signIn();
-  }
-});
+if (signInButton) {
+  signInButton.addEventListener('click', signIn);
+}
 
-signOutButton.addEventListener('click', () => {
-  tryTo('sign out', () => signOut(auth));
-});
+if (passwordInput) {
+  passwordInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      signIn();
+    }
+  });
+}
+
+if (signOutButton) {
+  signOutButton.addEventListener('click', () => {
+    tryTo('sign out', () => signOut(auth));
+  });
+}
 
 // ---------- Posts and comments ----------
 
@@ -440,6 +447,10 @@ function createDraftItem(section, draftDoc) {
 }
 
 function renderDrafts(section) {
+  if (!section.draftsList) {
+    return;
+  }
+
   section.draftsList.replaceChildren(
     ...section.drafts.map((draftDoc) => createDraftItem(section, draftDoc)));
 
@@ -469,6 +480,10 @@ function listenToDrafts(section) {
 // or editing a saved draft (section.editingRef points at that draft).
 
 function openDraft(section, draftDoc) {
+  if (!section.input || !section.titleInput) {
+    return;
+  }
+
   const hasUnsavedText = section.input.value.trim() !== '' || section.titleInput.value.trim() !== '';
   if (hasUnsavedText && !confirm('Replace what\'s in the box with this draft? Unsaved text will be lost.')) {
     return;
@@ -478,17 +493,25 @@ function openDraft(section, draftDoc) {
   section.titleInput.value = data.title || '';
   section.input.value = data.text;
   section.editingRef = draftDoc.ref;
-  section.editingNote.hidden = false;
+  if (section.editingNote) {
+    section.editingNote.hidden = false;
+  }
   renderDrafts(section);
   section.input.focus();
 }
 
 // Empties the box and goes back to writing something new
 function clearComposer(section) {
-  section.titleInput.value = '';
-  section.input.value = '';
+  if (section.titleInput) {
+    section.titleInput.value = '';
+  }
+  if (section.input) {
+    section.input.value = '';
+  }
   section.editingRef = null;
-  section.editingNote.hidden = true;
+  if (section.editingNote) {
+    section.editingNote.hidden = true;
+  }
   renderDrafts(section);
 }
 
@@ -506,6 +529,21 @@ const sections = [
     collection: 'accomplishments',
     prefix: 'accomplishment',
     emptyMessage: 'Please write an accomplishment first.'
+  }, 
+  {
+    collection: 'goals',
+    prefix: 'goal',
+    emptyMessage: 'Please write a goal first.'
+  },
+  {
+    collection: 'memories',
+    prefix: 'memory',
+    emptyMessage: 'Please share a memory first.'
+  },
+  {
+    collection: 'group-activities',
+    prefix: 'activity',
+    emptyMessage: 'Please share an activity idea first.'
   }
 ];
 
@@ -517,8 +555,19 @@ function setupPostSection(section) {
   section.editingNote = document.getElementById(`${prefix}-editing`);
   section.draftsList = document.getElementById(`${prefix}-drafts`);
   section.list = document.getElementById(`${section.collection}-list`);
+  const submitButton = document.getElementById(`${prefix}-submit`);
+  const saveDraftButton = document.getElementById(`${prefix}-save-draft`);
+  const stopEditingButton = document.getElementById(`${prefix}-stop-editing`);
   section.drafts = [];
   section.editingRef = null;
+
+  if (!section.titleInput || !section.input || !submitButton || !section.list) {
+    console.warn(`Skipping setup for section "${section.collection}" because required elements are missing.`);
+    section.disabled = true;
+    return;
+  }
+
+  section.disabled = false;
 
   // Returns the trimmed title and text, or null (with a message) if there's no text
   function readInput() {
@@ -530,7 +579,7 @@ function setupPostSection(section) {
     return { title: section.titleInput.value.trim(), text: text };
   }
 
-  document.getElementById(`${prefix}-submit`).addEventListener('click', () => {
+  submitButton.addEventListener('click', () => {
     const input = readInput();
     if (input !== null && confirm('Post this? Everyone will be able to see it.')) {
       tryTo('post', async () => {
@@ -545,32 +594,36 @@ function setupPostSection(section) {
     }
   });
 
-  document.getElementById(`${prefix}-save-draft`).addEventListener('click', () => {
-    const input = readInput();
-    if (input !== null) {
-      tryTo('save the draft', async () => {
-        const draft = {
-          section: section.collection,
-          title: input.title,
-          text: input.text,
-          updatedAt: serverTimestamp()
-        };
-        // Editing a draft saves over it; otherwise it's a brand new draft
-        if (section.editingRef) {
-          await setDoc(section.editingRef, draft);
-        } else {
-          await addDoc(draftsCollection(), draft);
-        }
-        clearComposer(section);
-      });
-    }
-  });
+  if (saveDraftButton) {
+    saveDraftButton.addEventListener('click', () => {
+      const input = readInput();
+      if (input !== null) {
+        tryTo('save the draft', async () => {
+          const draft = {
+            section: section.collection,
+            title: input.title,
+            text: input.text,
+            updatedAt: serverTimestamp()
+          };
+          // Editing a draft saves over it; otherwise it's a brand new draft
+          if (section.editingRef) {
+            await setDoc(section.editingRef, draft);
+          } else {
+            await addDoc(draftsCollection(), draft);
+          }
+          clearComposer(section);
+        });
+      }
+    });
+  }
 
-  document.getElementById(`${prefix}-stop-editing`).addEventListener('click', () => {
-    if (confirm('Stop editing? Changes since you last saved will be lost.')) {
-      clearComposer(section);
-    }
-  });
+  if (stopEditingButton) {
+    stopEditingButton.addEventListener('click', () => {
+      if (confirm('Stop editing? Changes since you last saved will be lost.')) {
+        clearComposer(section);
+      }
+    });
+  }
 }
 
 sections.forEach(setupPostSection);
@@ -578,6 +631,9 @@ sections.forEach(setupPostSection);
 // Starts the live listeners for the signed-in user
 function startListening() {
   sections.forEach((section) => {
+    if (section.disabled) {
+      return;
+    }
     unsubscribers.push(listenToPosts(section));
     unsubscribers.push(listenToDrafts(section));
   });
@@ -588,9 +644,13 @@ function stopListening() {
   unsubscribers.forEach((unsubscribe) => unsubscribe());
   unsubscribers = [];
   sections.forEach((section) => {
-    section.list.replaceChildren();
+    if (section.list) {
+      section.list.replaceChildren();
+    }
     section.drafts = [];
-    section.draftsList.replaceChildren();
+    if (section.draftsList) {
+      section.draftsList.replaceChildren();
+    }
   });
 }
 
@@ -599,9 +659,15 @@ function showSignedIn(user, name) {
   sections.forEach(clearComposer);
   userId = user.uid;
   userName = name;
-  greeting.textContent = `Hi, ${userName}!`;
-  signInOverlay.style.display = 'none';
-  signOutButton.hidden = false;
+  if (greeting) {
+    greeting.textContent = `Hi, ${userName}!`;
+  }
+  if (signInOverlay) {
+    signInOverlay.style.display = 'none';
+  }
+  if (signOutButton) {
+    signOutButton.hidden = false;
+  }
   startListening();
 }
 
@@ -610,10 +676,18 @@ function showSignedOut() {
   sections.forEach(clearComposer);
   userId = '';
   userName = '';
-  greeting.textContent = '';
-  signInOverlay.style.display = 'flex';
-  signOutButton.hidden = true;
-  nameInput.focus();
+  if (greeting) {
+    greeting.textContent = '';
+  }
+  if (signInOverlay) {
+    signInOverlay.style.display = 'flex';
+  }
+  if (signOutButton) {
+    signOutButton.hidden = true;
+  }
+  if (nameInput) {
+    nameInput.focus();
+  }
 }
 
 // Runs when the page loads (Firebase remembers you between visits)

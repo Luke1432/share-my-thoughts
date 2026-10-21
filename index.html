@@ -10,10 +10,10 @@
     <div id="sign-in-overlay" class="overlay">
         <div class="overlay-box">
             <h2>Welcome!</h2>
-            <p>Enter your name and the group password.</p>
+            <p>Enter your name and your password.</p>
             <p class="hint">Use the same name on every device to see your posts and drafts.</p>
             <input type="text" id="name-input" placeholder="Your name" maxlength="30" autocomplete="username">
-            <input type="password" id="password-input" placeholder="Group password" autocomplete="current-password">
+            <input type="password" id="password-input" placeholder="Password" autocomplete="current-password">
             <button id="sign-in">Sign in</button>
         </div>
     </div>
@@ -27,6 +27,8 @@
             <button data-page="thoughts">Thoughts</button>
             <button data-page="goals">Goals</button>
             <button data-page="accomplishments">Accomplishments</button>
+            <button data-page="memories">Memories</button>
+            <button data-page="group-activities">Group Activities</button>
         </nav>
         <p id="greeting"></p>
         <button id="sign-out" hidden>Sign out</button>
@@ -58,6 +60,20 @@
         <div id="goals" class="page">
             <h2>Goals</h2>
             <p>Here, you can share some goals that you're currently working on or would like to start working on. If you would like, we can offer assistance in achieving that goal, in terms of check-ins and such when we talk. I think this is also a good way to keep each other accountable and motivated. </p>
+            <div class="composer">
+                <p id="goal-editing" class="editing-note" hidden>
+                    Editing a saved draft. "Save draft" updates it, "Post" shares it.
+                    <button id="goal-stop-editing">Stop editing</button>
+                </p>
+                <input type="text" id="goal-title" placeholder="Title (optional)" maxlength="150">
+                <textarea id="goal-input" placeholder="Share a goal here" rows="5" maxlength="2000"></textarea>
+                <div>
+                    <button id="goal-submit">Post</button>
+                    <button id="goal-save-draft">Save draft</button>
+                </div>
+            </div>
+            <div id="goal-drafts" class="drafts-list"></div>
+            <div id="goals-list"></div>
         </div>
         <div id="accomplishments" class="page">
             <h2>Accomplishments and Other</h2>
@@ -77,9 +93,41 @@
             <div id="accomplishment-drafts" class="drafts-list"></div>
             <div id="accomplishments-list"></div>
         </div>
+        <div id="memories" class="page">
+            <h2>Memories</h2>
+            <p>Here, you can share some memories that you have with the group, whether it be a story or a picture. I think this is a good way to keep the group connected and to remember the good times we've had together. </p>
+            <div class="composer">
+                <p id="memory-editing" class="editing-note" hidden>
+                    Editing a saved draft. "Save draft" updates it, "Post" shares it.
+                    <button id="memory-stop-editing">Stop editing</button>
+                </p>
+                <input type="text" id="memory-title" placeholder="Title (optional)" maxlength="150">
+                <textarea id="memory-input" placeholder="Share a memory here" rows="5" maxlength="2000"></textarea>
+                <div>
+                    <button id="memory-submit">Post</button>
+                    <button id="memory-save-draft">Save draft</button>
+                </div>
+            </div>
+            <div id="memory-drafts" class="drafts-list"></div>
+            <div id="memories-list"></div>
+        </div>
         <div id="group-activities" class="page">
             <h2>Group Activities</h2>
             <p>Here, you can share some ideas for things you want to do as a group, whether it be a project or an activity, wherever it is. </p>
+            <div class="composer">
+                <p id="activity-editing" class="editing-note" hidden>
+                    Editing a saved draft. "Save draft" updates it, "Post" shares it.
+                    <button id="activity-stop-editing">Stop editing</button>
+                </p>
+                <input type="text" id="activity-title" placeholder="Title (optional)" maxlength="150">
+                <textarea id="activity-input" placeholder="Share an activity idea here" rows="5" maxlength="2000"></textarea>
+                <div>
+                    <button id="activity-submit">Post</button>
+                    <button id="activity-save-draft">Save draft</button>
+                </div>
+            </div>
+            <div id="activity-drafts" class="drafts-list"></div>
+            <div id="group-activities-list"></div>
         </div>
     </main>
 </html>

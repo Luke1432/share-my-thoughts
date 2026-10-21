@@ -2,18 +2,13 @@
 // These run on Google's servers, so (unlike script.js) nobody can change or skip them.
 // To use them: Firebase console -> Firestore Database -> Rules -> paste this whole file -> Publish.
 //
-// Everyone signs in with their name and the group password. Each name is its
+// Everyone signs in with their name and their own password. Each name is its
 // own Firebase account, so request.auth.uid tells the rules who is asking.
-// Only accounts that proved they know the group password (by saving it in
-// members/{userId}) can read or write anything.
-//
-// The group password lives in config/group -> { password }. Set it in the
-// Firebase console. No rule below matches config, so nobody can read it from
-// the website; the rules can still look at it with get().
+// Only signed-in accounts with a matching members/{userId} document can read
+// or write anything.
 //
 // Database layout:
-//   config/group                             -> { password }
-//   members/{userId}                         -> { name, groupPassword }
+//   members/{userId}                         -> { name }
 //   users/{userId}/drafts/{draftId}          -> { section, title, text, updatedAt }
 //   thoughts/{postId}                        -> { userId, name, title, text, createdAt }
 //   accomplishments/{postId}                 -> same as thoughts
@@ -26,22 +21,18 @@ service cloud.firestore {
     // The pages that hold shared posts. Add a name here when you give
     // another page (e.g. 'goals') a post section.
     function isPostSection(section) {
-      return section in ['thoughts', 'accomplishments'];
+      return section in ['thoughts', 'accomplishments', 'goals', 'memories', 'group-activities'];
     }
 
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function groupPassword() {
-      return get(/databases/$(database)/documents/config/group).data.password;
-    }
-
     function memberPath() {
       return /databases/$(database)/documents/members/$(request.auth.uid);
     }
 
-    // Signed in and has entered the right group password
+    // Signed in and has a member profile document
     function isMember() {
       return isSignedIn() && exists(memberPath());
     }
@@ -100,15 +91,14 @@ service cloud.firestore {
         && data.updatedAt == request.time;
     }
 
-    // Signing in saves your name here, which only works with the right group password
+    // Signing in saves your name here.
     match /members/{userId} {
       allow read: if isSignedIn() && request.auth.uid == userId;
       allow create, update: if isSignedIn() && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['name', 'groupPassword'])
+        && request.resource.data.keys().hasOnly(['name'])
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
-        && request.resource.data.name.size() <= 30
-        && request.resource.data.groupPassword == groupPassword();
+        && request.resource.data.name.size() <= 30;
     }
 
     // Drafts: only you can see, save or delete your own
