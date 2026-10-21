@@ -3,35 +3,31 @@
     <title>Share my thoughts</title>
     <meta charset="UTF-8">
     <link rel="stylesheet" href="style.css">
-    <!-- type="module" lets script.js import Firebase (modules are deferred automatically) -->
+    <!-- type="module" lets script.js use import, and (like defer) runs it after the page has loaded -->
     <script type="module" src="script.js"></script>
 </head>
 <body>
-    <div id="sign-in-overlay" class="overlay">
-        <div class="overlay-box">
-            <h2>Welcome!</h2>
-            <p>Enter your name and the group password.</p>
-            <p class="hint">Use the same name on every device to see your posts and drafts.</p>
-            <input type="text" id="name-input" placeholder="Your name" maxlength="30" autocomplete="username">
-            <input type="password" id="password-input" placeholder="Group password" autocomplete="current-password">
-            <button id="sign-in">Sign in</button>
-        </div>
-    </div>
     <header>
         <span class="icon-wrapper">
             <i class="fas fa-lock"></i>
         </span>
         <h1>Share my thoughts</h1>
-        <nav>
+        <nav hidden>
             <button data-page="intro">Home</button>
             <button data-page="thoughts">Thoughts</button>
             <button data-page="goals">Goals</button>
             <button data-page="accomplishments">Accomplishments</button>
         </nav>
-        <p id="greeting"></p>
-        <button id="sign-out" hidden>Sign out</button>
     </header>
-    <main>
+    <form id="login-form">
+        <input type="text" id="login-name" placeholder="Name" autocomplete="username" required>
+        <span class="hint">@sharemythoughts.example</span>
+        <input type="password" id="login-password" placeholder="Password" required>
+        <button type="submit">Log in</button>
+        <p id="login-error" hidden></p>
+    </form>
+    <button id="logout-button" hidden>Log out</button>
+    <main hidden>
         <div id="intro" class="page active">
             <h2>Welcome to Share my thoughts!</h2>
             <p>I created this page as a place to put some of my thoughts, things I am dealing with currently and goals that I have, and thought to expand it into somewhere we could keep ideas for hangouts and for everyone to share what they're struggling with or things they're proud of. I'm not sure if this is something y'all want so feel free to ignore it but I thought it might be nice. </p>
@@ -58,6 +54,20 @@
         <div id="goals" class="page">
             <h2>Goals</h2>
             <p>Here, you can share some goals that you're currently working on or would like to start working on. If you would like, we can offer assistance in achieving that goal, in terms of check-ins and such when we talk. I think this is also a good way to keep each other accountable and motivated. </p>
+            <div class="composer">
+                <p id="goal-editing" class="editing-note" hidden>
+                    Editing a saved draft. "Save draft" updates it, "Post" shares it.
+                    <button id="goal-stop-editing">Stop editing</button>
+                </p>
+                <input type="text" id="goal-title" placeholder="Title (optional)" maxlength="150">
+                <textarea id="goal-input" placeholder="Share a goal here" rows="5" maxlength="2000"></textarea>
+                <div>
+                    <button id="goal-submit">Post</button>
+                    <button id="goal-save-draft">Save draft</button>
+                </div>
+            </div>
+            <div id="goal-drafts" class="drafts-list"></div>
+            <div id="goals-list"></div>
         </div>
         <div id="accomplishments" class="page">
             <h2>Accomplishments and Other</h2>
@@ -82,4 +92,5 @@
             <p>Here, you can share some ideas for things you want to do as a group, whether it be a project or an activity, wherever it is. </p>
         </div>
     </main>
+    </body>
 </html>

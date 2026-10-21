@@ -1,28 +1,90 @@
-// This file is a module (see <script type="module"> in index.html), which is
-// what lets it import Firebase straight from Google's CDN without a build step
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import {
-  getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  deleteUser, onAuthStateChanged, signOut
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {
-  getFirestore, collection, doc, addDoc, setDoc, getDoc, deleteDoc,
-  query, where, orderBy, onSnapshot, serverTimestamp, writeBatch
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js";
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
+  from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
+
+// ---------- Login ----------
+// It's fine for these values to be public (anyone can see them in the browser).
+const firebaseConfig = {
+  apiKey: 'AIzaSyDLca_ojcHDl9eSnL8pp-B-D0Co5Yx6OsQ',
+  authDomain: 'thoughts-discussion.firebaseapp.com',
+  projectId: 'thoughts-discussion',
+  storageBucket: 'thoughts-discussion.firebasestorage.app',
+  messagingSenderId: '234546911005',
+  appId: '1:234546911005:web:8837e1d8aab37af7b0f3f4'
+};
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
 
-// The signed-in user. userId is the account's Firebase ID, which is the same
-// on every device you sign in on with the same name, so your drafts follow you around.
-let userName = '';
-let userId = '';
+// Who is logged in right now (null when nobody is)
+let currentUser = null;
 
-// Functions that stop the live database listeners, so we can turn them all
-// off when someone signs out
-let unsubscribers = [];
+// The name shown on posts and comments, looked up by login email. Anyone not
+// listed here shows up as the start of their email (alex@example.com -> alex).
+const names = {
+  // 'alex@example.com': 'Alex',
+};
+
+function currentName() {
+  const email = currentUser.email;
+  return names[email] || currentUser.displayName || email.split('@')[0];
+}
+
+// Everyone's login email is their name followed by this
+const emailDomain = '@sharemythoughts.example';
+
+const loginForm = document.getElementById('login-form');
+const loginError = document.getElementById('login-error');
+const logoutButton = document.getElementById('logout-button');
+
+loginForm.addEventListener('submit', async (event) => {
+  // Stops the form from reloading the page
+  event.preventDefault();
+  loginError.hidden = true;
+
+  // People only type their name; the rest of the email is added here.
+  // A full email (with an @) still works as typed.
+  const name = document.getElementById('login-name').value.trim().toLowerCase();
+  const email = name.includes('@') ? name : name + emailDomain;
+  const password = document.getElementById('login-password').value;
+  try {
+    await signInWithEmailAndPassword(auth, email, password);
+    loginForm.reset();
+  } catch (error) {
+    console.error(error);
+    loginError.textContent = error.code === 'auth/invalid-credential'
+      ? 'Wrong name or password.'
+      : `Couldn't log in: ${error.message}`;
+    loginError.hidden = false;
+  }
+});
+
+logoutButton.addEventListener('click', () => {
+  signOut(auth);
+});
+
+// Runs on page load (Firebase remembers who was logged in) and whenever
+// someone logs in or out. user is null when nobody is logged in.
+onAuthStateChanged(auth, (user) => {
+  currentUser = user;
+  const loggedIn = user !== null;
+  loginForm.hidden = loggedIn;
+  logoutButton.hidden = !loggedIn;
+  document.querySelector('nav').hidden = !loggedIn;
+  document.querySelector('main').hidden = !loggedIn;
+
+  // Swap in this person's own drafts, and empty the writing boxes so nothing
+  // the last person typed is left behind
+  sections.forEach((section) => {
+    section.drafts = loggedIn ? load(draftsKey(section)) : [];
+    clearComposer(section);
+    // Redraw posts so Delete buttons show up only on this person's posts
+    renderPosts(section);
+  });
+});
+
+// For now everything is saved in this browser's localStorage, so posts,
+// comments and drafts only show up on the device they were written on.
 
 function switchPage(pageId) {
   // 1. Find the page that is currently visible and hide it
@@ -38,204 +100,155 @@ function switchPage(pageId) {
   }
 }
 
-// Functions in a module aren't global, so onclick="switchPage(...)" can't see
-// switchPage. Instead each nav button names its page in a data-page attribute.
+// Each nav button names its page in a data-page attribute
 document.querySelectorAll('nav button[data-page]').forEach((button) => {
   button.addEventListener('click', () => switchPage(button.dataset.page));
 });
 
-// Runs a database action and tells the user if it fails
-// (for example no internet, or the security rules said no)
-async function tryTo(description, action) {
+// ---------- Saving ----------
+// localStorage only stores text, so lists are turned into JSON and back.
+
+function load(key) {
   try {
-    await action();
+    return JSON.parse(localStorage.getItem(key)) || [];
   } catch (error) {
     console.error(error);
-    alert(`Couldn't ${description}: ${error.message}`);
+    return [];
   }
 }
 
-// ---------- Sign in ----------
-// You sign in with your name and the group password. Behind the scenes each
-// name gets its own Firebase account (the name is turned into a made-up email
-// address, and the group password is its password), so the database rules can
-// tell who's who: only you can read your drafts or delete your posts.
-//
-// The group password itself is checked by the database rules against
-// config/group in Firestore, which nobody can read from the website.
-
-const signInOverlay = document.getElementById('sign-in-overlay');
-const nameInput = document.getElementById('name-input');
-const passwordInput = document.getElementById('password-input');
-const signInButton = document.getElementById('sign-in');
-const signOutButton = document.getElementById('sign-out');
-const greeting = document.getElementById('greeting');
-
-// True while the sign-in button is working, so onAuthStateChanged (below)
-// doesn't check membership before we've had a chance to save it
-let signingIn = false;
-
-// Turns a name into the made-up email for its account. Lowercase so "Lukas"
-// and "lukas" are the same person, and written as hex digits so any
-// characters (spaces, accents, emoji) make a valid email address.
-// No emails are ever sent to it.
-function nameToEmail(name) {
-  const bytes = new TextEncoder().encode(name.toLowerCase());
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-  return `${hex}@sharemythoughts.example`;
-}
-
-// Signs in to this name's account, creating it the first time the name is used
-async function signInWithName(name, password) {
-  const email = nameToEmail(name);
-  let isNewAccount = false;
-
+function save(key, items) {
   try {
-    await signInWithEmailAndPassword(auth, email, password);
+    localStorage.setItem(key, JSON.stringify(items));
   } catch (error) {
-    // Firebase gives the same error for "no such account" and "wrong
-    // password", so try making the account to find out which it was
-    try {
-      await createUserWithEmailAndPassword(auth, email, password);
-      isNewAccount = true;
-    } catch (createError) {
-      if (createError.code === 'auth/email-already-in-use') {
-        throw new Error('Wrong group password.');
-      }
-      if (createError.code === 'auth/weak-password') {
-        throw new Error('Wrong group password.');
-      }
-      throw createError;
-    }
-  }
-
-  // Saving your name to members/{userId} is where the rules check the group
-  // password. If it's wrong, undo everything so no account is left behind.
-  try {
-    await setDoc(doc(db, 'members', auth.currentUser.uid), {
-      name: name,
-      groupPassword: password
-    });
-  } catch (error) {
-    if (isNewAccount) {
-      await deleteUser(auth.currentUser);
-    } else {
-      await signOut(auth);
-    }
-    throw new Error('Wrong group password.');
+    console.error(error);
+    alert(`Couldn't save: ${error.message}`);
   }
 }
 
-function signIn() {
-  const name = nameInput.value.trim();
-  const password = passwordInput.value;
-  if (name === '' || password === '') {
-    alert('Please enter your name and the group password.');
-    return;
-  }
-  if (name.length > 30) {
-    alert('Please use a name of 30 characters or less.');
-    return;
-  }
-
-  signingIn = true;
-  signInButton.disabled = true;
-  tryTo('sign in', async () => {
-    await signInWithName(name, password);
-    passwordInput.value = '';
-    showSignedIn(auth.currentUser, name);
-  }).finally(() => {
-    signingIn = false;
-    signInButton.disabled = false;
-  });
+// A unique enough ID for posts, comments and drafts
+function newId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
-
-signInButton.addEventListener('click', signIn);
-passwordInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    signIn();
-  }
-});
-
-signOutButton.addEventListener('click', () => {
-  tryTo('sign out', () => signOut(auth));
-});
 
 // ---------- Posts and comments ----------
 
-// Shows a Firestore timestamp as e.g. "Oct 19, 2026, 3:45 PM"
-function formatTime(timestamp) {
-  const date = timestamp ? timestamp.toDate() : new Date();
-  return date.toLocaleString([], {
+// Shows a time (in milliseconds) as e.g. "Oct 19, 2026, 3:45 PM"
+function formatTime(time) {
+  return new Date(time).toLocaleString([], {
     dateStyle: 'medium',
     timeStyle: 'short'
   });
 }
 
-// Builds the "Name · date, time" line shown above a post or comment.
-// createdAt is a Firestore timestamp, so it shows when it was actually posted.
-function createMeta(name, createdAt) {
+// Shows who wrote a post or comment and when, e.g. "Alex · Oct 19, 2026, 3:45 PM".
+// Things written before names were added just show the time.
+function createMeta(item) {
   const meta = document.createElement('div');
   meta.className = 'meta';
-  updateMeta(meta, name, createdAt);
+  let time = formatTime(item.createdAt);
+  if (item.editedAt) {
+    time += ' (edited)';
+  }
+  meta.textContent = item.name ? `${item.name} · ${time}` : time;
   return meta;
 }
 
-function updateMeta(meta, name, createdAt) {
-  meta.textContent = `${name} · ${formatTime(createdAt)}`;
+// Newest first, without changing the order they're saved in
+function newestFirst(items) {
+  return [...items].sort((a, b) => b.createdAt - a.createdAt);
 }
 
-// The data saved for every new post. serverTimestamp() lets Google fill
-// in the time, so it's correct even if someone's clock is off.
-function newPost(title, text) {
-  return {
-    userId: userId,
-    name: userName,
-    title: title,
-    text: text,
-    createdAt: serverTimestamp()
-  };
-}
-
-// Comments are the same as posts, just without a title
-function newComment(text) {
-  return {
-    userId: userId,
-    name: userName,
-    text: text,
-    createdAt: serverTimestamp()
-  };
-}
-
-// Reads a document's data. Right after you post, the server hasn't filled in
-// createdAt yet, so 'estimate' gives a temporary time instead of null.
-function readData(snapshot) {
-  return snapshot.data({ serverTimestamps: 'estimate' });
-}
-
-function createCommentItem(commentDoc) {
-  const data = readData(commentDoc);
+// Builds one comment. renderComments redraws the post's comments after a delete.
+function createCommentItem(section, post, comment, renderComments) {
   const commentItem = document.createElement('div');
   commentItem.className = 'comment-item';
 
   const text = document.createElement('p');
-  text.textContent = data.text;
+  text.textContent = comment.text;
 
-  commentItem.appendChild(createMeta(data.name, data.createdAt));
+  commentItem.appendChild(createMeta(comment));
   commentItem.appendChild(text);
+
+  // Only the person who wrote a comment can edit or delete it
+  if (isAuthor(comment)) {
+    const editButton = document.createElement('button');
+    editButton.textContent = 'Edit';
+    editButton.addEventListener('click', () => {
+      commentItem.replaceWith(createCommentEditor(section, post, comment, renderComments));
+    });
+
+    const deleteButton = document.createElement('button');
+    deleteButton.textContent = 'Delete';
+    deleteButton.addEventListener('click', () => {
+      if (confirm('Delete this comment?')) {
+        post.comments = post.comments.filter((c) => c.id !== comment.id);
+        // A deleted post is only kept for its comments, so it goes once they're gone
+        if (post.deleted && post.comments.length === 0) {
+          section.posts = section.posts.filter((p) => p.id !== post.id);
+          save(section.postsKey, section.posts);
+          renderPosts(section);
+          return;
+        }
+        save(section.postsKey, section.posts);
+        renderComments();
+      }
+    });
+
+    commentItem.appendChild(editButton);
+    commentItem.appendChild(deleteButton);
+  }
   return commentItem;
 }
 
-// Builds the comment section (list + comment input) for one post.
-// Comments are saved under the post: {section}/{postId}/comments
-function createCommentSection(postRef) {
-  const commentsRef = collection(postRef, 'comments');
+// Swaps a comment for a text box to change it. Save or Cancel puts it back.
+function createCommentEditor(section, post, comment, renderComments) {
+  const editor = document.createElement('div');
+  editor.className = 'comment-item';
 
-  const section = document.createElement('div');
-  section.className = 'comments';
+  const textInput = document.createElement('input');
+  textInput.type = 'text';
+  textInput.value = comment.text;
+
+  const saveButton = document.createElement('button');
+  saveButton.textContent = 'Save';
+  saveButton.addEventListener('click', () => {
+    const text = textInput.value.trim();
+    if (text === '') {
+      alert('Please enter a comment before saving.');
+      return;
+    }
+    comment.text = text;
+    comment.editedAt = Date.now();
+    save(section.postsKey, section.posts);
+    editor.replaceWith(createCommentItem(section, post, comment, renderComments));
+  });
+
+  const cancelButton = document.createElement('button');
+  cancelButton.textContent = 'Cancel';
+  cancelButton.addEventListener('click', () => {
+    editor.replaceWith(createCommentItem(section, post, comment, renderComments));
+  });
+
+  editor.appendChild(textInput);
+  editor.appendChild(saveButton);
+  editor.appendChild(cancelButton);
+  return editor;
+}
+
+// Builds the comment section (list + comment input) for one post
+function createCommentSection(section, post) {
+  const commentSection = document.createElement('div');
+  commentSection.className = 'comments';
 
   const commentsList = document.createElement('div');
   commentsList.className = 'comments-list';
+
+  function renderComments() {
+    commentsList.replaceChildren(...newestFirst(post.comments).map(
+      (comment) => createCommentItem(section, post, comment, renderComments)));
+  }
+  renderComments();
 
   const commentInput = document.createElement('input');
   commentInput.type = 'text';
@@ -248,158 +261,208 @@ function createCommentSection(postRef) {
     const comment = commentInput.value.trim();
     if (comment === '') {
       alert('Please enter a comment before submitting.');
-    } else {
-      tryTo('post your comment', async () => {
-        await addDoc(commentsRef, newComment(comment));
-        commentInput.value = '';
-      });
+      return;
     }
+    post.comments.push({
+      id: newId(),
+      userId: currentUser.uid,
+      name: currentName(),
+      text: comment,
+      createdAt: Date.now()
+    });
+    save(section.postsKey, section.posts);
+    commentInput.value = '';
+    // Only redraw this post's comments, so half-typed comments on other posts aren't wiped
+    renderComments();
   });
 
-  // Keeps the comment list up to date as anyone adds comments
-  const stopComments = onSnapshot(query(commentsRef, orderBy('createdAt')), (snapshot) => {
-    commentsList.replaceChildren(...snapshot.docs.map(createCommentItem));
+  commentSection.appendChild(commentsList);
+  commentSection.appendChild(commentInput);
+  commentSection.appendChild(commentButton);
+  return commentSection;
+}
+
+// True if the logged-in person wrote this post or comment
+function isAuthor(item) {
+  if (currentUser === null) {
+    return false;
+  }
+  if (item.userId) {
+    return item.userId === currentUser.uid;
+  }
+  // Posts from before user IDs were saved only have a name, so match on that
+  return item.name !== undefined && item.name === currentName();
+}
+
+// Swaps a post for a title + text box to change it. Save or Cancel puts the
+// post back, so the rest of the page (and half-typed comments) is left alone.
+function createPostEditor(section, post) {
+  const editor = document.createElement('div');
+  editor.className = 'thought-item composer';
+
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.placeholder = 'Title (optional)';
+  titleInput.maxLength = 150;
+  titleInput.value = post.title || '';
+
+  const textInput = document.createElement('textarea');
+  textInput.rows = 5;
+  textInput.maxLength = 2000;
+  textInput.value = post.text;
+
+  const saveButton = document.createElement('button');
+  saveButton.textContent = 'Save';
+  saveButton.addEventListener('click', () => {
+    const text = textInput.value.trim();
+    if (text === '') {
+      alert(section.emptyMessage);
+      return;
+    }
+    post.title = titleInput.value.trim();
+    post.text = text;
+    post.editedAt = Date.now();
+    save(section.postsKey, section.posts);
+    editor.replaceWith(createPostItem(section, post));
   });
 
-  section.appendChild(commentsList);
-  section.appendChild(commentInput);
-  section.appendChild(commentButton);
-  return { element: section, stopComments: stopComments };
+  const cancelButton = document.createElement('button');
+  cancelButton.textContent = 'Cancel';
+  cancelButton.addEventListener('click', () => {
+    editor.replaceWith(createPostItem(section, post));
+  });
+
+  const buttons = document.createElement('div');
+  buttons.appendChild(saveButton);
+  buttons.appendChild(cancelButton);
+
+  editor.appendChild(titleInput);
+  editor.appendChild(textInput);
+  editor.appendChild(buttons);
+  return editor;
 }
 
 // Builds one post on the page
-function createPostItem(postDoc) {
-  const data = readData(postDoc);
+function createPostItem(section, post) {
   const postItem = document.createElement('div');
   postItem.className = 'thought-item';
 
-  // Titles are optional, so the heading is hidden when there isn't one
-  // (older posts from before titles existed don't have the field at all)
-  const title = document.createElement('h3');
-  const meta = createMeta(data.name, data.createdAt);
-  const text = document.createElement('p');
-
-  function showContent(postData) {
-    title.textContent = postData.title || '';
-    title.hidden = !postData.title;
-    text.textContent = postData.text;
+  // A deleted post that had comments: say so, but keep showing the comments
+  if (post.deleted) {
+    const note = document.createElement('p');
+    note.className = 'hint';
+    note.textContent = 'This post was deleted.';
+    postItem.appendChild(note);
+    postItem.appendChild(createCommentSection(section, post));
+    return postItem;
   }
-  showContent(data);
 
-  postItem.appendChild(title);
-  postItem.appendChild(meta);
+  // Titles are optional, so there's only a heading when there is one
+  if (post.title) {
+    const title = document.createElement('h3');
+    title.textContent = post.title;
+    postItem.appendChild(title);
+  }
+
+  const text = document.createElement('p');
+  text.textContent = post.text;
+
+  postItem.appendChild(createMeta(post));
   postItem.appendChild(text);
 
-  // Only show Delete on your own posts
-  if (data.userId === userId) {
+  // Only the person who wrote a post can edit or delete it
+  if (isAuthor(post)) {
+    const editButton = document.createElement('button');
+    editButton.textContent = 'Edit';
+    editButton.addEventListener('click', () => {
+      postItem.replaceWith(createPostEditor(section, post));
+    });
+    postItem.appendChild(editButton);
+
     const deleteButton = document.createElement('button');
     deleteButton.textContent = 'Delete';
     deleteButton.addEventListener('click', () => {
       if (confirm('Delete this post?')) {
-        // Note: Firestore doesn't delete the post's comments along with it,
-        // they just stop being shown
-        tryTo('delete the post', () => deleteDoc(postDoc.ref));
+        if (post.comments.length > 0) {
+          // Keep the post's place so its comments stay, but drop what it said
+          post.deleted = true;
+          post.title = '';
+          post.text = '';
+        } else {
+          section.posts = section.posts.filter((p) => p.id !== post.id);
+        }
+        save(section.postsKey, section.posts);
+        renderPosts(section);
       }
     });
     postItem.appendChild(deleteButton);
   }
 
-  const comments = createCommentSection(postDoc.ref);
-  postItem.appendChild(comments.element);
-
-  return {
-    element: postItem,
-    stopComments: comments.stopComments,
-    // Called when the post changes in the database (e.g. the server filled in the time)
-    update: (newDoc) => {
-      const newData = readData(newDoc);
-      updateMeta(meta, newData.name, newData.createdAt);
-      showContent(newData);
-    }
-  };
+  postItem.appendChild(createCommentSection(section, post));
+  return postItem;
 }
 
-// Shows everyone's posts for one section and keeps them updated live.
-// Returns a function that stops listening.
-function listenToPosts(section) {
-  // post id -> what createPostItem returned, so we can update or remove it later
-  const items = new Map();
-  const postsQuery = query(collection(db, section.collection), orderBy('createdAt'));
+function renderPosts(section) {
+  section.list.replaceChildren(
+    ...newestFirst(section.posts).map((post) => createPostItem(section, post)));
+}
 
-  const stopPosts = onSnapshot(postsQuery, (snapshot) => {
-    // docChanges() only lists what changed, so we update just those posts
-    // instead of rebuilding the whole list (which would wipe half-typed comments)
-    snapshot.docChanges().forEach((change) => {
-      const id = change.doc.id;
-
-      if (change.type === 'removed' || change.type === 'modified') {
-        items.get(id).element.remove();
-      }
-      if (change.type === 'removed') {
-        items.get(id).stopComments();
-        items.delete(id);
-        return;
-      }
-
-      if (change.type === 'added') {
-        items.set(id, createPostItem(change.doc));
-      } else {
-        items.get(id).update(change.doc);
-      }
-
-      // newIndex is where the post belongs in the list (oldest first)
-      const nextItem = section.list.children[change.newIndex] || null;
-      section.list.insertBefore(items.get(id).element, nextItem);
-    });
+function addPost(section, title, text) {
+  section.posts.push({
+    id: newId(),
+    userId: currentUser.uid,
+    name: currentName(),
+    title: title,
+    text: text,
+    createdAt: Date.now(),
+    comments: []
   });
-
-  return () => {
-    stopPosts();
-    items.forEach((item) => item.stopComments());
-  };
+  save(section.postsKey, section.posts);
+  renderPosts(section);
 }
 
 // ---------- Drafts ----------
-// Saved under users/{userId}/drafts. The database rules only let you read your
-// own, and since they're in the database they sync across devices.
 
-function draftsCollection() {
-  return collection(db, 'users', userId, 'drafts');
+// Drafts are saved per account (by its Firebase user ID), so people sharing
+// a browser don't see each other's drafts
+function draftsKey(section) {
+  return `${section.name}-drafts-${currentUser.uid}`;
 }
 
-// Moves a draft into the shared posts. A batch does both steps together,
-// so you never end up with the post saved but the draft not deleted (or the reverse).
-async function publishDraft(section, draftRef, title, text) {
-  const batch = writeBatch(db);
-  batch.set(doc(collection(db, section.collection)), newPost(title, text));
-  batch.delete(draftRef);
-  await batch.commit();
+function deleteDraft(section, draftId) {
+  section.drafts = section.drafts.filter((d) => d.id !== draftId);
+  save(draftsKey(section), section.drafts);
 }
 
-function createDraftItem(section, draftDoc) {
-  const data = readData(draftDoc);
+// Moves a draft into the posts
+function publishDraft(section, draftId, title, text) {
+  deleteDraft(section, draftId);
+  addPost(section, title, text);
+}
+
+function createDraftItem(section, draft) {
   const draftItem = document.createElement('div');
   draftItem.className = 'draft-item';
 
-  if (data.title) {
+  if (draft.title) {
     const title = document.createElement('h4');
-    title.textContent = data.title;
+    title.textContent = draft.title;
     draftItem.appendChild(title);
   }
 
   const meta = document.createElement('div');
   meta.className = 'meta';
-  meta.textContent = `Last saved ${formatTime(data.updatedAt)}`;
+  meta.textContent = `Last saved ${formatTime(draft.updatedAt)}`;
 
   const text = document.createElement('p');
-  text.textContent = data.text;
+  text.textContent = draft.text;
 
   draftItem.appendChild(meta);
   draftItem.appendChild(text);
 
   // The draft that's open in the text box can't be published or deleted from
   // here, so changes typed into the box aren't lost by accident
-  if (section.editingRef && section.editingRef.id === draftDoc.id) {
+  if (section.editingId === draft.id) {
     draftItem.classList.add('editing');
     const note = document.createElement('p');
     note.className = 'hint';
@@ -411,9 +474,9 @@ function createDraftItem(section, draftDoc) {
   const publishButton = document.createElement('button');
   publishButton.textContent = 'Post';
   publishButton.addEventListener('click', () => {
-    if (confirm('Post this draft? Everyone will be able to see it.')) {
-      tryTo('post the draft', () =>
-        publishDraft(section, draftDoc.ref, data.title || '', data.text));
+    if (confirm('Post this draft?')) {
+      publishDraft(section, draft.id, draft.title || '', draft.text);
+      renderDrafts(section);
     }
   });
 
@@ -422,14 +485,15 @@ function createDraftItem(section, draftDoc) {
   const editButton = document.createElement('button');
   editButton.textContent = 'Edit';
   editButton.addEventListener('click', () => {
-    openDraft(section, draftDoc);
+    openDraft(section, draft);
   });
 
   const deleteButton = document.createElement('button');
   deleteButton.textContent = 'Delete';
   deleteButton.addEventListener('click', () => {
     if (confirm('Delete this draft?')) {
-      tryTo('delete the draft', () => deleteDoc(draftDoc.ref));
+      deleteDraft(section, draft.id);
+      renderDrafts(section);
     }
   });
 
@@ -440,44 +504,31 @@ function createDraftItem(section, draftDoc) {
 }
 
 function renderDrafts(section) {
+  // Most recently saved first
+  const drafts = [...section.drafts].sort((a, b) => b.updatedAt - a.updatedAt);
   section.draftsList.replaceChildren(
-    ...section.drafts.map((draftDoc) => createDraftItem(section, draftDoc)));
+    ...drafts.map((draft) => createDraftItem(section, draft)));
 
-  if (section.drafts.length > 0) {
+  if (drafts.length > 0) {
     const heading = document.createElement('h3');
-    heading.textContent = `Your drafts (${section.drafts.length}, only you can see these)`;
+    heading.textContent = `Your drafts (${drafts.length})`;
     section.draftsList.prepend(heading);
   }
 }
 
-// Shows your drafts for one section and keeps them updated live
-// (so a draft saved on your phone shows up on your laptop)
-function listenToDrafts(section) {
-  const draftsQuery = query(draftsCollection(), where('section', '==', section.collection));
-
-  return onSnapshot(draftsQuery, (snapshot) => {
-    // Most recently saved first. Sorted here rather than with orderBy, because
-    // combining where() and orderBy() on different fields needs an extra index
-    section.drafts = snapshot.docs.sort((a, b) =>
-      readData(b).updatedAt.toMillis() - readData(a).updatedAt.toMillis());
-    renderDrafts(section);
-  });
-}
-
 // ---------- Writing box ----------
 // Each section has one box (title + text). It's either writing something new,
-// or editing a saved draft (section.editingRef points at that draft).
+// or editing a saved draft (section.editingId is that draft's ID).
 
-function openDraft(section, draftDoc) {
+function openDraft(section, draft) {
   const hasUnsavedText = section.input.value.trim() !== '' || section.titleInput.value.trim() !== '';
   if (hasUnsavedText && !confirm('Replace what\'s in the box with this draft? Unsaved text will be lost.')) {
     return;
   }
 
-  const data = draftDoc.data();
-  section.titleInput.value = data.title || '';
-  section.input.value = data.text;
-  section.editingRef = draftDoc.ref;
+  section.titleInput.value = draft.title || '';
+  section.input.value = draft.text;
+  section.editingId = draft.id;
   section.editingNote.hidden = false;
   renderDrafts(section);
   section.input.focus();
@@ -487,23 +538,28 @@ function openDraft(section, draftDoc) {
 function clearComposer(section) {
   section.titleInput.value = '';
   section.input.value = '';
-  section.editingRef = null;
+  section.editingId = null;
   section.editingNote.hidden = true;
   renderDrafts(section);
 }
 
 // ---------- Sections ----------
-// Each page with posts. 'collection' is where its posts are saved in the
-// database (it must also be listed in isPostSection in firestore.rules), and
-// 'prefix' is the start of the IDs of its elements in index.html.
+// Each page with posts. 'name' is used for its localStorage keys and the
+// ID of its list, and 'prefix' is the start of the IDs of its other
+// elements in index.html.
 const sections = [
   {
-    collection: 'thoughts',
+    name: 'thoughts',
     prefix: 'thought',
     emptyMessage: 'Please write a thought first.'
   },
   {
-    collection: 'accomplishments',
+    name: 'goals',
+    prefix: 'goal',
+    emptyMessage: 'Please write a goal first.'
+  },
+  {
+    name: 'accomplishments',
     prefix: 'accomplishment',
     emptyMessage: 'Please write an accomplishment first.'
   }
@@ -516,9 +572,12 @@ function setupPostSection(section) {
   section.input = document.getElementById(`${prefix}-input`);
   section.editingNote = document.getElementById(`${prefix}-editing`);
   section.draftsList = document.getElementById(`${prefix}-drafts`);
-  section.list = document.getElementById(`${section.collection}-list`);
+  section.list = document.getElementById(`${section.name}-list`);
+  section.postsKey = `${section.name}-posts`;
+  section.posts = load(section.postsKey);
+  // Filled in with the logged-in person's drafts by onAuthStateChanged
   section.drafts = [];
-  section.editingRef = null;
+  section.editingId = null;
 
   // Returns the trimmed title and text, or null (with a message) if there's no text
   function readInput() {
@@ -532,37 +591,31 @@ function setupPostSection(section) {
 
   document.getElementById(`${prefix}-submit`).addEventListener('click', () => {
     const input = readInput();
-    if (input !== null && confirm('Post this? Everyone will be able to see it.')) {
-      tryTo('post', async () => {
-        if (section.editingRef) {
-          // Posting a draft you were editing also removes it from your drafts
-          await publishDraft(section, section.editingRef, input.title, input.text);
-        } else {
-          await addDoc(collection(db, section.collection), newPost(input.title, input.text));
-        }
-        clearComposer(section);
-      });
+    if (input !== null && confirm('Post this?')) {
+      if (section.editingId) {
+        // Posting a draft you were editing also removes it from your drafts
+        publishDraft(section, section.editingId, input.title, input.text);
+      } else {
+        addPost(section, input.title, input.text);
+      }
+      clearComposer(section);
     }
   });
 
   document.getElementById(`${prefix}-save-draft`).addEventListener('click', () => {
     const input = readInput();
     if (input !== null) {
-      tryTo('save the draft', async () => {
-        const draft = {
-          section: section.collection,
-          title: input.title,
-          text: input.text,
-          updatedAt: serverTimestamp()
-        };
-        // Editing a draft saves over it; otherwise it's a brand new draft
-        if (section.editingRef) {
-          await setDoc(section.editingRef, draft);
-        } else {
-          await addDoc(draftsCollection(), draft);
-        }
-        clearComposer(section);
-      });
+      const draft = {
+        id: section.editingId || newId(),
+        title: input.title,
+        text: input.text,
+        updatedAt: Date.now()
+      };
+      // Editing a draft saves over it; otherwise it's a brand new draft
+      section.drafts = section.drafts.filter((d) => d.id !== draft.id);
+      section.drafts.push(draft);
+      save(draftsKey(section), section.drafts);
+      clearComposer(section);
     }
   });
 
@@ -571,72 +624,9 @@ function setupPostSection(section) {
       clearComposer(section);
     }
   });
+
+  renderPosts(section);
+  renderDrafts(section);
 }
 
 sections.forEach(setupPostSection);
-
-// Starts the live listeners for the signed-in user
-function startListening() {
-  sections.forEach((section) => {
-    unsubscribers.push(listenToPosts(section));
-    unsubscribers.push(listenToDrafts(section));
-  });
-}
-
-// Stops the listeners and clears the lists, e.g. when someone signs out
-function stopListening() {
-  unsubscribers.forEach((unsubscribe) => unsubscribe());
-  unsubscribers = [];
-  sections.forEach((section) => {
-    section.list.replaceChildren();
-    section.drafts = [];
-    section.draftsList.replaceChildren();
-  });
-}
-
-function showSignedIn(user, name) {
-  stopListening();
-  sections.forEach(clearComposer);
-  userId = user.uid;
-  userName = name;
-  greeting.textContent = `Hi, ${userName}!`;
-  signInOverlay.style.display = 'none';
-  signOutButton.hidden = false;
-  startListening();
-}
-
-function showSignedOut() {
-  stopListening();
-  sections.forEach(clearComposer);
-  userId = '';
-  userName = '';
-  greeting.textContent = '';
-  signInOverlay.style.display = 'flex';
-  signOutButton.hidden = true;
-  nameInput.focus();
-}
-
-// Runs when the page loads (Firebase remembers you between visits)
-// and whenever someone signs in or out
-onAuthStateChanged(auth, async (user) => {
-  if (signingIn) {
-    return;
-  }
-  if (!user) {
-    showSignedOut();
-    return;
-  }
-
-  // Remembered from a previous visit: get your name from members/{userId}.
-  // If it isn't there, sign-in never finished, so start over.
-  try {
-    const member = await getDoc(doc(db, 'members', user.uid));
-    if (member.exists()) {
-      showSignedIn(user, member.data().name);
-      return;
-    }
-  } catch (error) {
-    console.error(error);
-  }
-  await signOut(auth);
-});

@@ -43,33 +43,6 @@
     margin: 4px 0;
 }
 
-/* Pop-up that covers the page until you enter your name */
-.overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    justify-content: center;
-    align-items: center;
-    z-index: 10;
-}
-
-.overlay * {
-    background: transparent;
-}
-
-.overlay-box {
-    background: #E6D8C1;
-    padding: 30px;
-    border-radius: 8px;
-    text-align: center;
-}
-
-.overlay-box input,
-.overlay-box button {
-    background: white;
-}
-
 /* Drafts get a dashed border so they look different from shared posts */
 .draft-item {
     border: 1px dashed #b8a688;
@@ -115,9 +88,4 @@
 .draft-item.editing {
     border-style: solid;
     border-width: 2px;
-}
-
-.overlay-box input {
-    display: block;
-    margin: 8px auto;
 }
