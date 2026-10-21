@@ -3,6 +3,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getAuth, signInWithEmailAndPassword,
+  EmailAuthProvider, reauthenticateWithCredential, updatePassword,
   onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
@@ -67,6 +68,14 @@ const passwordInput = document.getElementById("password-input");
 const signInButton = document.getElementById("sign-in");
 const signOutButton = document.getElementById("sign-out");
 const greeting = document.getElementById("greeting");
+const changePasswordToggle = document.getElementById("change-password-toggle");
+const passwordPanel = document.getElementById("password-panel");
+const currentPasswordInput = document.getElementById("current-password");
+const newPasswordInput = document.getElementById("new-password");
+const confirmPasswordInput = document.getElementById("confirm-password");
+const savePasswordButton = document.getElementById("save-password");
+const cancelPasswordButton = document.getElementById("cancel-password");
+const passwordError = document.getElementById("password-error");
 
 // True while the sign-in button is working, so onAuthStateChanged (below)
 // doesn't check membership before we've had a chance to save it
@@ -165,6 +174,90 @@ if (passwordInput) {
 if (signOutButton) {
   signOutButton.addEventListener("click", () => {
     tryTo("sign out", () => signOut(auth));
+  });
+}
+
+function setPasswordError(message) {
+  if (!passwordError) {
+    return;
+  }
+  passwordError.textContent = message;
+  passwordError.hidden = message === "";
+}
+
+function closePasswordPanel() {
+  if (passwordPanel) {
+    passwordPanel.hidden = true;
+  }
+  if (currentPasswordInput) {
+    currentPasswordInput.value = "";
+  }
+  if (newPasswordInput) {
+    newPasswordInput.value = "";
+  }
+  if (confirmPasswordInput) {
+    confirmPasswordInput.value = "";
+  }
+  setPasswordError("");
+}
+
+if (changePasswordToggle && passwordPanel) {
+  changePasswordToggle.addEventListener("click", () => {
+    passwordPanel.hidden = !passwordPanel.hidden;
+    setPasswordError("");
+    if (!passwordPanel.hidden && currentPasswordInput) {
+      currentPasswordInput.focus();
+    }
+  });
+}
+
+if (cancelPasswordButton) {
+  cancelPasswordButton.addEventListener("click", closePasswordPanel);
+}
+
+if (savePasswordButton) {
+  savePasswordButton.addEventListener("click", () => {
+    tryTo("change password", async () => {
+      if (!auth.currentUser || !auth.currentUser.email) {
+        throw new Error("You need to be signed in to change your password.");
+      }
+      if (!currentPasswordInput || !newPasswordInput || !confirmPasswordInput) {
+        throw new Error("Password form is not available.");
+      }
+
+      setPasswordError("");
+      const currentPassword = currentPasswordInput.value;
+      const newPassword = newPasswordInput.value;
+      const confirmPassword = confirmPasswordInput.value;
+
+      if (newPassword === "") {
+        setPasswordError("Please enter a new password.");
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setPasswordError("The new passwords do not match.");
+        return;
+      }
+
+      try {
+        const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);
+        await reauthenticateWithCredential(auth.currentUser, credential);
+        await updatePassword(auth.currentUser, newPassword);
+      } catch (error) {
+        if (error.code === "auth/wrong-password" || error.code === "auth/invalid-credential") {
+          setPasswordError("Your current password is wrong.");
+          return;
+        }
+        if (error.code === "auth/weak-password") {
+          setPasswordError("New password must be at least 6 characters.");
+          return;
+        }
+        throw error;
+      }
+
+      closePasswordPanel();
+      alert("Password updated.");
+    });
   });
 }
 
@@ -636,6 +729,9 @@ function showSignedIn(user, name) {
   if (signOutButton) {
     signOutButton.hidden = false;
   }
+  if (changePasswordToggle) {
+    changePasswordToggle.hidden = false;
+  }
   startListening();
 }
 
@@ -653,6 +749,10 @@ function showSignedOut() {
   if (signOutButton) {
     signOutButton.hidden = true;
   }
+  if (changePasswordToggle) {
+    changePasswordToggle.hidden = true;
+  }
+  closePasswordPanel();
   if (nameInput) {
     nameInput.focus();
   }

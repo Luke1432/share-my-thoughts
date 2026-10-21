@@ -31,7 +31,19 @@
             <button data-page="group-activities">Group Activities</button>
         </nav>
         <p id="greeting"></p>
+        <button id="change-password-toggle" hidden>Change password</button>
         <button id="sign-out" hidden>Sign out</button>
+        <div id="password-panel" class="password-panel" hidden>
+            <h3>Change password</h3>
+            <input type="password" id="current-password" placeholder="Current password" autocomplete="current-password">
+            <input type="password" id="new-password" placeholder="New password" autocomplete="new-password">
+            <input type="password" id="confirm-password" placeholder="Confirm new password" autocomplete="new-password">
+            <div>
+                <button id="save-password">Save new password</button>
+                <button id="cancel-password" type="button">Cancel</button>
+            </div>
+            <p id="password-error" class="hint" hidden></p>
+        </div>
     </header>
     <main>
         <div id="intro" class="page active">

@@ -121,3 +121,22 @@
     display: block;
     margin: 8px auto;
 }
+
+.password-panel {
+    max-width: 360px;
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid #b8a688;
+    border-radius: 8px;
+}
+
+.password-panel input {
+    display: block;
+    width: 100%;
+    margin: 6px 0;
+    box-sizing: border-box;
+}
+
+.password-panel h3 {
+    margin: 4px 0 8px;
+}
