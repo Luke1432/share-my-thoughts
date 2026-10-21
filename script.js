@@ -20,6 +20,12 @@ const db = getFirestore(app);
 // on every device you sign in on with the same name, so your drafts follow you around.
 let userName = "";
 let userId = "";
+// Largest file we'll try to open at all
+const MAX_IMAGE_FILE_BYTES = 25 * 1024 * 1024;
+// Saved image must fit under the 700000 character limit in firestore.rules
+const MAX_IMAGE_DATA_URL_LENGTH = 650000;
+// Longest side of an image after it's shrunk
+const MAX_IMAGE_DIMENSION = 1600;
 
 // Functions that stop the live database listeners, so we can turn them all
 // off when someone signs out
@@ -284,12 +290,13 @@ function updateMeta(meta, name, createdAt) {
   meta.textContent = `${name} · ${formatTime(createdAt)}`;
 }
 
-function newPost(title, text) {
+function newPost(title, text, imageDataUrl = "") {
   return {
     userId: userId,
     name: userName,
     title: title,
     text: text,
+    imageDataUrl: imageDataUrl,
     createdAt: serverTimestamp()
   };
 }
@@ -377,6 +384,15 @@ function createPostItem(postDoc) {
 
   postItem.appendChild(title);
   postItem.appendChild(meta);
+
+  if (data.imageDataUrl) {
+    const image = document.createElement("img");
+    image.className = "post-image";
+    image.src = data.imageDataUrl;
+    image.alt = "Memory image";
+    postItem.appendChild(image);
+  }
+
   postItem.appendChild(text);
 
   if (data.userId === userId) {
@@ -453,9 +469,9 @@ function draftsCollection() {
   return collection(db, "users", userId, "drafts");
 }
 
-async function publishDraft(section, draftRef, title, text) {
+async function publishDraft(section, draftRef, title, text, imageDataUrl = "") {
   const batch = writeBatch(db);
-  batch.set(doc(collection(db, section.collection)), newPost(title, text));
+  batch.set(doc(collection(db, section.collection)), newPost(title, text, imageDataUrl));
   batch.delete(draftRef);
   await batch.commit();
 }
@@ -479,6 +495,13 @@ function createDraftItem(section, draftDoc) {
   text.textContent = data.text;
 
   draftItem.appendChild(meta);
+  if (data.imageDataUrl) {
+    const image = document.createElement("img");
+    image.className = "draft-image";
+    image.src = data.imageDataUrl;
+    image.alt = "Draft memory image";
+    draftItem.appendChild(image);
+  }
   draftItem.appendChild(text);
 
   if (section.editingRef && section.editingRef.id === draftDoc.id) {
@@ -495,7 +518,7 @@ function createDraftItem(section, draftDoc) {
   publishButton.addEventListener("click", () => {
     if (confirm("Post this draft? Everyone will be able to see it.")) {
       tryTo("post the draft", () =>
-        publishDraft(section, draftDoc.ref, data.title || "", data.text));
+        publishDraft(section, draftDoc.ref, data.title || "", data.text, data.imageDataUrl || ""));
     }
   });
 
@@ -546,6 +569,84 @@ function listenToDrafts(section) {
   });
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Could not read the selected image."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not read the selected image."));
+    };
+    image.src = url;
+  });
+}
+
+// Scales the image down and saves it as a JPEG, lowering the quality and then
+// the size until it's small enough to store
+async function shrinkImageToDataUrl(file) {
+  const image = await loadImage(file);
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  let scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(image.width, image.height));
+
+  while (scale * Math.max(image.width, image.height) >= 200) {
+    canvas.width = Math.round(image.width * scale);
+    canvas.height = Math.round(image.height * scale);
+    // White background so transparent parts don't turn black in the JPEG
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    for (const quality of [0.85, 0.7, 0.55]) {
+      const dataUrl = canvas.toDataURL("image/jpeg", quality);
+      if (dataUrl.length <= MAX_IMAGE_DATA_URL_LENGTH) {
+        return dataUrl;
+      }
+    }
+    scale *= 0.75;
+  }
+
+  throw new Error("Could not make this image small enough. Please try a different one.");
+}
+
+async function readOptionalImageDataUrl(section) {
+  if (!section.imageInput) {
+    return "";
+  }
+
+  const file = section.imageInput.files && section.imageInput.files[0];
+  if (!file) {
+    return section.editingImageDataUrl || "";
+  }
+
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Please choose an image file.");
+  }
+  if (file.size > MAX_IMAGE_FILE_BYTES) {
+    throw new Error("Image is too large. Please use an image up to 25 MB.");
+  }
+
+  // Keep small images as they are (so GIFs stay animated), shrink the rest
+  const original = await readFileAsDataUrl(file);
+  if (original.length <= MAX_IMAGE_DATA_URL_LENGTH) {
+    return original;
+  }
+  return await shrinkImageToDataUrl(file);
+}
+
 // ---------- Writing box ----------
 
 function openDraft(section, draftDoc) {
@@ -563,6 +664,10 @@ function openDraft(section, draftDoc) {
   section.titleInput.value = data.title || "";
   section.input.value = data.text;
   section.editingRef = draftDoc.ref;
+  section.editingImageDataUrl = data.imageDataUrl || "";
+  if (section.imageInput) {
+    section.imageInput.value = "";
+  }
   if (section.editingNote) {
     section.editingNote.hidden = false;
   }
@@ -578,6 +683,10 @@ function clearComposer(section) {
     section.input.value = "";
   }
   section.editingRef = null;
+  section.editingImageDataUrl = "";
+  if (section.imageInput) {
+    section.imageInput.value = "";
+  }
   if (section.editingNote) {
     section.editingNote.hidden = true;
   }
@@ -618,6 +727,7 @@ function setupPostSection(section) {
   const prefix = section.prefix;
   section.titleInput = document.getElementById(`${prefix}-title`);
   section.input = document.getElementById(`${prefix}-input`);
+  section.imageInput = document.getElementById(`${prefix}-image`);
   section.editingNote = document.getElementById(`${prefix}-editing`);
   section.draftsList = document.getElementById(`${prefix}-drafts`);
   section.list = document.getElementById(`${section.collection}-list`);
@@ -626,6 +736,7 @@ function setupPostSection(section) {
   const stopEditingButton = document.getElementById(`${prefix}-stop-editing`);
   section.drafts = [];
   section.editingRef = null;
+  section.editingImageDataUrl = "";
 
   if (!section.titleInput || !section.input || !submitButton || !section.list) {
     console.warn(`Skipping setup for section \"${section.collection}\" because required elements are missing.`);
@@ -635,38 +746,46 @@ function setupPostSection(section) {
 
   section.disabled = false;
 
-  function readInput() {
+  async function readInput() {
     const text = section.input.value.trim();
     if (text === "") {
       alert(section.emptyMessage);
       return null;
     }
-    return { title: section.titleInput.value.trim(), text: text };
+    const imageDataUrl = await readOptionalImageDataUrl(section);
+    return { title: section.titleInput.value.trim(), text: text, imageDataUrl: imageDataUrl };
   }
 
   submitButton.addEventListener("click", () => {
-    const input = readInput();
-    if (input !== null && confirm("Post this? Everyone will be able to see it.")) {
-      tryTo("post", async () => {
+    tryTo("post", async () => {
+      const input = await readInput();
+      if (input === null || !confirm("Post this? Everyone will be able to see it.")) {
+        return;
+      }
         if (section.editingRef) {
-          await publishDraft(section, section.editingRef, input.title, input.text);
+          await publishDraft(section, section.editingRef, input.title, input.text, input.imageDataUrl);
         } else {
-          await addDoc(collection(db, section.collection), newPost(input.title, input.text));
+          await addDoc(
+            collection(db, section.collection),
+            newPost(input.title, input.text, input.imageDataUrl)
+          );
         }
         clearComposer(section);
       });
-    }
   });
 
   if (saveDraftButton) {
     saveDraftButton.addEventListener("click", () => {
-      const input = readInput();
-      if (input !== null) {
-        tryTo("save the draft", async () => {
+      tryTo("save the draft", async () => {
+        const input = await readInput();
+        if (input === null) {
+          return;
+        }
           const draft = {
             section: section.collection,
             title: input.title,
             text: input.text,
+            imageDataUrl: input.imageDataUrl,
             updatedAt: serverTimestamp()
           };
           if (section.editingRef) {
@@ -676,7 +795,6 @@ function setupPostSection(section) {
           }
           clearComposer(section);
         });
-      }
     });
   }
 

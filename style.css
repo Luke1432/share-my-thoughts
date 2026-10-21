@@ -111,6 +111,16 @@
     margin: 4px 0;
 }
 
+.post-image,
+.draft-image {
+    display: block;
+    max-width: 100%;
+    max-height: 320px;
+    margin: 8px 0;
+    border-radius: 6px;
+    object-fit: cover;
+}
+
 /* The draft that's currently open in the writing box */
 .draft-item.editing {
     border-style: solid;

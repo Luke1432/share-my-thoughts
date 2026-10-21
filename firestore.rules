@@ -9,8 +9,8 @@
 //
 // Database layout:
 //   members/{userId}                         -> { name }
-//   users/{userId}/drafts/{draftId}          -> { section, title, text, updatedAt }
-//   thoughts/{postId}                        -> { userId, name, title, text, createdAt }
+//   users/{userId}/drafts/{draftId}          -> { section, title, text, imageDataUrl, updatedAt }
+//   thoughts/{postId}                        -> { userId, name, title, text, imageDataUrl, createdAt }
 //   accomplishments/{postId}                 -> same as thoughts
 //   {thoughts|accomplishments}/{postId}/comments/{commentId} -> { userId, name, text, createdAt }
 
@@ -51,6 +51,13 @@ service cloud.firestore {
       return title is string && title.size() <= 150;
     }
 
+    // Optional image is saved as a data URL. Empty string means no image.
+    function isValidImageDataUrl(value) {
+      return value is string
+        && value.size() <= 700000
+        && (value == '' || value.matches('^data:image/.+'));
+    }
+
     // A new post or comment must be saved under your own user ID and the name
     // you signed in with, have some text, and use the server's time (so nobody
     // can fake the date)
@@ -63,8 +70,9 @@ service cloud.firestore {
 
     function isValidNewPost() {
       let data = request.resource.data;
-      return data.keys().hasOnly(['userId', 'name', 'title', 'text', 'createdAt'])
+      return data.keys().hasOnly(['userId', 'name', 'title', 'text', 'imageDataUrl', 'createdAt'])
         && isValidTitle(data.title)
+        && isValidImageDataUrl(data.get('imageDataUrl', ''))
         && isValidNewEntry(data);
     }
 
@@ -77,17 +85,19 @@ service cloud.firestore {
     // Only the author can edit, and only the title and text
     function isValidEdit() {
       return isUser(resource.data.userId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'text'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'text', 'imageDataUrl'])
         && isValidText(request.resource.data.text)
-        && isValidTitle(request.resource.data.get('title', ''));
+        && isValidTitle(request.resource.data.get('title', ''))
+        && isValidImageDataUrl(request.resource.data.get('imageDataUrl', ''));
     }
 
     function isValidDraft() {
       let data = request.resource.data;
-      return data.keys().hasOnly(['section', 'title', 'text', 'updatedAt'])
+      return data.keys().hasOnly(['section', 'title', 'text', 'imageDataUrl', 'updatedAt'])
         && isPostSection(data.section)
         && isValidTitle(data.title)
         && isValidText(data.text)
+        && isValidImageDataUrl(data.get('imageDataUrl', ''))
         && data.updatedAt == request.time;
     }
 
