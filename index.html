@@ -27,6 +27,15 @@
         <p id="login-error" hidden></p>
     </form>
     <button id="logout-button" hidden>Log out</button>
+    <button id="change-password-button" hidden>Change password</button>
+    <form id="password-form" hidden>
+        <input type="password" id="current-password" placeholder="Current password" autocomplete="current-password" required>
+        <input type="password" id="new-password" placeholder="New password" autocomplete="new-password" minlength="6" required>
+        <input type="password" id="confirm-password" placeholder="Repeat new password" autocomplete="new-password" required>
+        <button type="submit">Save new password</button>
+        <button type="button" id="password-cancel">Cancel</button>
+        <p id="password-error" hidden></p>
+    </form>
     <main hidden>
         <div id="intro" class="page active">
             <h2>Welcome to Share my thoughts!</h2>

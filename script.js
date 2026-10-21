@@ -1,6 +1,8 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
-import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
-  from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
+import {
+  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
+  EmailAuthProvider, reauthenticateWithCredential, updatePassword
+} from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
 
 // ---------- Login ----------
 // It's fine for these values to be public (anyone can see them in the browser).
@@ -63,6 +65,59 @@ logoutButton.addEventListener('click', () => {
   signOut(auth);
 });
 
+// ---------- Changing your password ----------
+// The login emails aren't real inboxes, so "forgot password" emails can't
+// work. Instead, logged-in people can change it here.
+
+const changePasswordButton = document.getElementById('change-password-button');
+const passwordForm = document.getElementById('password-form');
+const passwordError = document.getElementById('password-error');
+
+function closePasswordForm() {
+  passwordForm.reset();
+  passwordForm.hidden = true;
+  passwordError.hidden = true;
+}
+
+changePasswordButton.addEventListener('click', () => {
+  passwordForm.hidden = false;
+});
+
+document.getElementById('password-cancel').addEventListener('click', closePasswordForm);
+
+passwordForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  passwordError.hidden = true;
+
+  const currentPassword = document.getElementById('current-password').value;
+  const newPassword = document.getElementById('new-password').value;
+  if (newPassword !== document.getElementById('confirm-password').value) {
+    passwordError.textContent = 'The new passwords don\'t match.';
+    passwordError.hidden = false;
+    return;
+  }
+
+  try {
+    // Firebase only lets you change your password if you've just proved you
+    // know the current one
+    const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
+    await reauthenticateWithCredential(currentUser, credential);
+    await updatePassword(currentUser, newPassword);
+    closePasswordForm();
+    alert('Your password has been changed.');
+  } catch (error) {
+    console.error(error);
+    if (error.code === 'auth/invalid-credential' || error.code === 'auth/wrong-password') {
+      passwordError.textContent = 'Your current password is wrong.';
+    } else if (error.code === 'auth/weak-password') {
+      passwordError.textContent = 'The new password needs at least 6 characters.';
+    } else {
+      passwordError.textContent = `Couldn't change your password: ${error.message}`;
+    }
+    passwordError.hidden = false;
+  }
+});
+
 // Runs on page load (Firebase remembers who was logged in) and whenever
 // someone logs in or out. user is null when nobody is logged in.
 onAuthStateChanged(auth, (user) => {
@@ -70,6 +125,8 @@ onAuthStateChanged(auth, (user) => {
   const loggedIn = user !== null;
   loginForm.hidden = loggedIn;
   logoutButton.hidden = !loggedIn;
+  changePasswordButton.hidden = !loggedIn;
+  closePasswordForm();
   document.querySelector('nav').hidden = !loggedIn;
   document.querySelector('main').hidden = !loggedIn;
 
