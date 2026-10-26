@@ -95,6 +95,12 @@
     max-width: 600px;
 }
 
+/* display: flex above would otherwise override the hidden attribute
+   on the edit box inside a post */
+.composer[hidden] {
+    display: none;
+}
+
 .composer textarea {
     font: inherit;
     resize: vertical;

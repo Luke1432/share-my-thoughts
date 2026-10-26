@@ -7,7 +7,7 @@ import {
   onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, addDoc, setDoc, getDoc, deleteDoc,
+  getFirestore, collection, doc, addDoc, setDoc, getDoc, updateDoc, deleteDoc,
   query, where, orderBy, onSnapshot, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
@@ -317,15 +317,94 @@ function readData(snapshot) {
 
 function createCommentItem(commentDoc) {
   const data = readData(commentDoc);
+  let latestText = data.text;
   const commentItem = document.createElement("div");
   commentItem.className = "comment-item";
 
+  // The comment as everyone sees it. Hidden while you're editing it.
+  const view = document.createElement("div");
+  const meta = createMeta(data.name, data.createdAt);
   const text = document.createElement("p");
   text.textContent = data.text;
+  view.appendChild(meta);
+  view.appendChild(text);
+  commentItem.appendChild(view);
 
-  commentItem.appendChild(createMeta(data.name, data.createdAt));
-  commentItem.appendChild(text);
-  return commentItem;
+  if (data.userId === userId) {
+    const editor = document.createElement("div");
+    editor.hidden = true;
+
+    const editInput = document.createElement("input");
+    editInput.type = "text";
+    const saveButton = document.createElement("button");
+    saveButton.textContent = "Save";
+    const cancelButton = document.createElement("button");
+    cancelButton.textContent = "Cancel";
+
+    editor.appendChild(editInput);
+    editor.appendChild(saveButton);
+    editor.appendChild(cancelButton);
+    commentItem.appendChild(editor);
+
+    function closeEditor() {
+      editor.hidden = true;
+      view.hidden = false;
+    }
+
+    function save() {
+      const newText = editInput.value.trim();
+      if (newText === "") {
+        alert("Please enter a comment before saving.");
+        return;
+      }
+      saveButton.disabled = true;
+      tryTo("save the comment", async () => {
+        await updateDoc(commentDoc.ref, { text: newText });
+        closeEditor();
+      }).finally(() => {
+        saveButton.disabled = false;
+      });
+    }
+
+    saveButton.addEventListener("click", save);
+    cancelButton.addEventListener("click", closeEditor);
+    editInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        save();
+      } else if (event.key === "Escape") {
+        closeEditor();
+      }
+    });
+
+    const editButton = document.createElement("button");
+    editButton.textContent = "Edit";
+    editButton.addEventListener("click", () => {
+      editInput.value = latestText;
+      view.hidden = true;
+      editor.hidden = false;
+      editInput.focus();
+    });
+    view.appendChild(editButton);
+
+    const deleteButton = document.createElement("button");
+    deleteButton.textContent = "Delete";
+    deleteButton.addEventListener("click", () => {
+      if (confirm("Delete this comment?")) {
+        tryTo("delete the comment", () => deleteDoc(commentDoc.ref));
+      }
+    });
+    view.appendChild(deleteButton);
+  }
+
+  return {
+    element: commentItem,
+    update: (newDoc) => {
+      const newData = readData(newDoc);
+      latestText = newData.text;
+      updateMeta(meta, newData.name, newData.createdAt);
+      text.textContent = newData.text;
+    }
+  };
 }
 
 function createCommentSection(postRef) {
@@ -356,8 +435,32 @@ function createCommentSection(postRef) {
     }
   });
 
+  // Update comments one by one (instead of rebuilding the list) so a comment
+  // you're editing isn't wiped out when someone else adds one
+  const items = new Map();
   const stopComments = onSnapshot(query(commentsRef, orderBy("createdAt")), (snapshot) => {
-    commentsList.replaceChildren(...snapshot.docs.map(createCommentItem));
+    snapshot.docChanges().forEach((change) => {
+      const id = change.doc.id;
+      const existing = items.get(id);
+
+      if (change.type === "removed") {
+        if (existing) {
+          existing.element.remove();
+        }
+        items.delete(id);
+        return;
+      }
+
+      if (change.type === "added") {
+        items.set(id, createCommentItem(change.doc));
+      } else if (existing) {
+        existing.element.remove();
+        existing.update(change.doc);
+      }
+
+      const nextItem = commentsList.children[change.newIndex] || null;
+      commentsList.insertBefore(items.get(id).element, nextItem);
+    });
   });
 
   section.appendChild(commentsList);
@@ -366,36 +469,145 @@ function createCommentSection(postRef) {
   return { element: section, stopComments: stopComments };
 }
 
-function createPostItem(postDoc) {
+// Box that lets you edit your post right where it is, instead of in the
+// writing box at the top. onClose runs after you save or cancel.
+function createPostEditor(section, postRef, onClose) {
+  const editor = document.createElement("div");
+  editor.className = "composer";
+  editor.hidden = true;
+
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.placeholder = "Title (optional)";
+  titleInput.maxLength = 150;
+
+  const textInput = document.createElement("textarea");
+  textInput.rows = 5;
+  textInput.maxLength = 2000;
+
+  editor.appendChild(titleInput);
+  editor.appendChild(textInput);
+
+  // Only sections that take images (memories) get an image picker
+  let imageInput = null;
+  if (section.imageInput) {
+    imageInput = document.createElement("input");
+    imageInput.type = "file";
+    imageInput.accept = "image/*";
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "Choose an image to replace the current one, or leave this empty to keep it.";
+    editor.appendChild(imageInput);
+    editor.appendChild(hint);
+  }
+
+  const saveButton = document.createElement("button");
+  saveButton.textContent = "Save changes";
+  const cancelButton = document.createElement("button");
+  cancelButton.textContent = "Cancel";
+  const buttons = document.createElement("div");
+  buttons.appendChild(saveButton);
+  buttons.appendChild(cancelButton);
+  editor.appendChild(buttons);
+
+  let currentImageDataUrl = "";
+
+  function close() {
+    editor.hidden = true;
+    onClose();
+  }
+
+  cancelButton.addEventListener("click", close);
+
+  saveButton.addEventListener("click", () => {
+    const text = textInput.value.trim();
+    if (text === "") {
+      alert(section.emptyMessage);
+      return;
+    }
+    if (!confirm("Save changes to this post? Everyone will see the new version.")) {
+      return;
+    }
+    saveButton.disabled = true;
+    tryTo("save the changes", async () => {
+      const imageDataUrl = await readOptionalImageDataUrl(imageInput, currentImageDataUrl);
+      await updateDoc(postRef, {
+        title: titleInput.value.trim(),
+        text: text,
+        imageDataUrl: imageDataUrl
+      });
+      close();
+    }).finally(() => {
+      saveButton.disabled = false;
+    });
+  });
+
+  return {
+    element: editor,
+    open: (postData) => {
+      titleInput.value = postData.title || "";
+      textInput.value = postData.text;
+      currentImageDataUrl = postData.imageDataUrl || "";
+      if (imageInput) {
+        imageInput.value = "";
+      }
+      editor.hidden = false;
+      textInput.focus();
+    }
+  };
+}
+
+function createPostItem(section, postDoc) {
   const data = readData(postDoc);
+  // Latest version of the post, so Edit always opens what's currently saved
+  let latestDoc = postDoc;
   const postItem = document.createElement("div");
   postItem.className = "thought-item";
 
+  // The post as everyone sees it. Hidden while you're editing it.
+  const view = document.createElement("div");
+
   const title = document.createElement("h3");
   const meta = createMeta(data.name, data.createdAt);
+  const image = document.createElement("img");
+  image.className = "post-image";
+  image.alt = "Memory image";
   const text = document.createElement("p");
 
   function showContent(postData) {
     title.textContent = postData.title || "";
     title.hidden = !postData.title;
+    if (postData.imageDataUrl) {
+      image.src = postData.imageDataUrl;
+    } else {
+      image.removeAttribute("src");
+    }
+    // style.css gives .post-image display: block, which would override the hidden attribute
+    image.style.display = postData.imageDataUrl ? "" : "none";
     text.textContent = postData.text;
   }
   showContent(data);
 
-  postItem.appendChild(title);
-  postItem.appendChild(meta);
-
-  if (data.imageDataUrl) {
-    const image = document.createElement("img");
-    image.className = "post-image";
-    image.src = data.imageDataUrl;
-    image.alt = "Memory image";
-    postItem.appendChild(image);
-  }
-
-  postItem.appendChild(text);
+  view.appendChild(title);
+  view.appendChild(meta);
+  view.appendChild(image);
+  view.appendChild(text);
+  postItem.appendChild(view);
 
   if (data.userId === userId) {
+    const editor = createPostEditor(section, postDoc.ref, () => {
+      view.hidden = false;
+    });
+    postItem.appendChild(editor.element);
+
+    const editButton = document.createElement("button");
+    editButton.textContent = "Edit";
+    editButton.addEventListener("click", () => {
+      view.hidden = true;
+      editor.open(readData(latestDoc));
+    });
+    view.appendChild(editButton);
+
     const deleteButton = document.createElement("button");
     deleteButton.textContent = "Delete";
     deleteButton.addEventListener("click", () => {
@@ -403,7 +615,7 @@ function createPostItem(postDoc) {
         tryTo("delete the post", () => deleteDoc(postDoc.ref));
       }
     });
-    postItem.appendChild(deleteButton);
+    view.appendChild(deleteButton);
   }
 
   const comments = createCommentSection(postDoc.ref);
@@ -413,6 +625,7 @@ function createPostItem(postDoc) {
     element: postItem,
     stopComments: comments.stopComments,
     update: (newDoc) => {
+      latestDoc = newDoc;
       const newData = readData(newDoc);
       updateMeta(meta, newData.name, newData.createdAt);
       showContent(newData);
@@ -444,7 +657,7 @@ function listenToPosts(section) {
       }
 
       if (change.type === "added") {
-        items.set(id, createPostItem(change.doc));
+        items.set(id, createPostItem(section, change.doc));
       } else {
         const existing = items.get(id);
         if (existing) {
@@ -630,14 +843,15 @@ async function shrinkImageToDataUrl(file) {
   throw new Error("Could not make this image small enough. Please try a different one.");
 }
 
-async function readOptionalImageDataUrl(section) {
-  if (!section.imageInput) {
+// Reads the image chosen in imageInput, or keeps currentDataUrl if none was chosen
+async function readOptionalImageDataUrl(imageInput, currentDataUrl = "") {
+  if (!imageInput) {
     return "";
   }
 
-  const file = section.imageInput.files && section.imageInput.files[0];
+  const file = imageInput.files && imageInput.files[0];
   if (!file) {
-    return section.editingImageDataUrl || "";
+    return currentDataUrl;
   }
 
   if (!file.type.startsWith("image/")) {
@@ -657,28 +871,40 @@ async function readOptionalImageDataUrl(section) {
 
 // ---------- Writing box ----------
 
-function openDraft(section, draftDoc) {
+// Shows the "Editing a saved draft" note when mode is "draft", hides it when "new"
+function setComposerMode(section, mode) {
+  if (section.editingNote) {
+    section.editingNote.hidden = mode === "new";
+  }
+}
+
+// Puts a draft into the box, after checking it won't throw away unsaved text
+function loadIntoComposer(section, data, kind) {
   if (!section.input || !section.titleInput) {
-    return;
+    return false;
   }
 
   const hasUnsavedText =
     section.input.value.trim() !== "" || section.titleInput.value.trim() !== "";
-  if (hasUnsavedText && !confirm("Replace what's in the box with this draft? Unsaved text will be lost.")) {
-    return;
+  if (hasUnsavedText && !confirm(`Replace what's in the box with this ${kind}? Unsaved text will be lost.`)) {
+    return false;
   }
 
-  const data = draftDoc.data();
   section.titleInput.value = data.title || "";
   section.input.value = data.text;
-  section.editingRef = draftDoc.ref;
   section.editingImageDataUrl = data.imageDataUrl || "";
   if (section.imageInput) {
     section.imageInput.value = "";
   }
-  if (section.editingNote) {
-    section.editingNote.hidden = false;
+  return true;
+}
+
+function openDraft(section, draftDoc) {
+  if (!loadIntoComposer(section, draftDoc.data(), "draft")) {
+    return;
   }
+  section.editingRef = draftDoc.ref;
+  setComposerMode(section, "draft");
   renderDrafts(section);
   section.input.focus();
 }
@@ -695,9 +921,7 @@ function clearComposer(section) {
   if (section.imageInput) {
     section.imageInput.value = "";
   }
-  if (section.editingNote) {
-    section.editingNote.hidden = true;
-  }
+  setComposerMode(section, "new");
   renderDrafts(section);
 }
 
@@ -761,7 +985,7 @@ function setupPostSection(section) {
       alert(section.emptyMessage);
       return null;
     }
-    const imageDataUrl = await readOptionalImageDataUrl(section);
+    const imageDataUrl = await readOptionalImageDataUrl(section.imageInput, section.editingImageDataUrl);
     return { title: section.titleInput.value.trim(), text: text, imageDataUrl: imageDataUrl };
   }
 
