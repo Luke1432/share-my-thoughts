@@ -28,6 +28,7 @@
             <button data-page="goals">Goals</button>
             <button data-page="accomplishments">Accomplishments</button>
             <button data-page="memories">Memories</button>
+            <button data-page="books">Books</button>
             <button data-page="group-activities">Group Activities</button>
         </nav>
         <p id="greeting"></p>
@@ -128,6 +129,46 @@
             <h3 id="memories-heading" hidden>Posts (everyone can see these)</h3>
             <div id="memories-list"></div>
         </div>
+        <div id="books" class="page">
+            <h2>Books</h2>
+            <p>Add a book you're reading or have read. Type its name and the cover is found for you. Click a book to open its own page, where you can keep notes about what you read.</p>
+            <div class="composer">
+                <input type="text" id="book-title" placeholder="Name of the book" maxlength="150">
+                <input type="text" id="book-author" placeholder="Author (optional, helps find the right cover)" maxlength="150">
+                <p id="book-cover-status" class="hint" hidden></p>
+                <div id="book-cover-preview" class="cover-preview" hidden>
+                    <div id="book-cover-preview-image"></div>
+                    <div>
+                        <p id="book-cover-match" class="hint"></p>
+                        <button id="book-cover-next" type="button">Try another cover</button>
+                        <button id="book-cover-none" type="button">No cover</button>
+                    </div>
+                </div>
+                <div>
+                    <button id="book-submit">Add book</button>
+                </div>
+            </div>
+            <h3 id="books-heading" hidden>Books (everyone can see these)</h3>
+            <div id="books-list" class="books-grid"></div>
+        </div>
+        <div id="book-page" class="page">
+            <button id="book-back" type="button">&larr; Back to books</button>
+            <p id="book-page-missing" hidden>This book couldn't be found. It may have been deleted.</p>
+            <div id="book-page-content" hidden>
+                <div class="book-header">
+                    <div id="book-page-cover"></div>
+                    <div>
+                        <h2 id="book-page-title"></h2>
+                        <p id="book-page-author"></p>
+                        <div id="book-page-meta" class="meta"></div>
+                        <button id="book-delete" type="button" hidden>Delete book</button>
+                    </div>
+                </div>
+                <h3>Notes</h3>
+                <p class="hint">Notes about what you read. Everyone can see them and add their own.</p>
+                <div id="book-notes"></div>
+            </div>
+        </div>
         <div id="group-activities" class="page">
             <h2>Group Activities</h2>
             <p>Here, you can share some ideas for things you want to do as a group, whether it be a project or an activity, wherever it is. </p>
@@ -147,5 +188,23 @@
             <h3 id="group-activities-heading" hidden>Posts (everyone can see these)</h3>
             <div id="group-activities-list"></div>
         </div>
+        <div id="books" class="page">
+            <h2>Books</h2>
+            <p>Here, you can share some books that you have read or are currently reading, and what you think about them. This is a good way to share recommendations and to find new books to read. </p>
+            <div class="composer">
+                <p id="book-editing" class="editing-note" hidden>
+                    <span class="editing-text">Editing a saved draft. "Save draft" updates it, "Post" shares it.</span>
+                    <button id="book-stop-editing">Stop editing</button>
+                </p>
+                <input type="text" id="book-title" placeholder="Title (optional)" maxlength="150">
+                <textarea id="book-input" placeholder="Share a book here" rows="5" maxlength="2000"></textarea>
+                <div>
+                    <button id="book-submit">Post</button>
+                    <button id="book-save-draft">Save draft</button>
+                </div>
+            </div>
+            <div id="book-drafts" class="drafts-list"></div>
+            <h3 id="books-heading" hidden>Posts (everyone can see these)</h3>
+            <div id="books-list"></div>
     </main>
 </html>

@@ -7,7 +7,7 @@ import {
   onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, addDoc, setDoc, getDoc, updateDoc, deleteDoc,
+  getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
   query, where, orderBy, onSnapshot, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
@@ -48,7 +48,14 @@ function switchPage(pageId) {
 // Functions in a module aren't global, so onclick="switchPage(...)" can't see
 // switchPage. Instead each nav button names its page in a data-page attribute.
 document.querySelectorAll("nav button[data-page]").forEach((button) => {
-  button.addEventListener("click", () => switchPage(button.dataset.page));
+  button.addEventListener("click", () => {
+    // Leaving a book's page: take "#book/..." off the address so it doesn't reopen
+    if (bookIdFromHash()) {
+      history.pushState(null, "", location.pathname + location.search);
+    }
+    closeBookPage();
+    switchPage(button.dataset.page);
+  });
 });
 
 // Runs a database action and tells the user if it fails
@@ -315,7 +322,8 @@ function readData(snapshot) {
   return snapshot.data({ serverTimestamps: "estimate" });
 }
 
-function createCommentItem(commentDoc) {
+// multiline: edit in a big text box (for book notes) instead of a one-line input
+function createCommentItem(commentDoc, multiline = false) {
   const data = readData(commentDoc);
   let latestText = data.text;
   const commentItem = document.createElement("div");
@@ -334,16 +342,24 @@ function createCommentItem(commentDoc) {
     const editor = document.createElement("div");
     editor.hidden = true;
 
-    const editInput = document.createElement("input");
-    editInput.type = "text";
+    const editInput = document.createElement(multiline ? "textarea" : "input");
+    if (multiline) {
+      editInput.rows = 4;
+      editInput.maxLength = 2000;
+      editor.className = "composer";
+    } else {
+      editInput.type = "text";
+    }
     const saveButton = document.createElement("button");
     saveButton.textContent = "Save";
     const cancelButton = document.createElement("button");
     cancelButton.textContent = "Cancel";
 
     editor.appendChild(editInput);
-    editor.appendChild(saveButton);
-    editor.appendChild(cancelButton);
+    const editButtons = document.createElement("div");
+    editButtons.appendChild(saveButton);
+    editButtons.appendChild(cancelButton);
+    editor.appendChild(editButtons);
     commentItem.appendChild(editor);
 
     function closeEditor() {
@@ -354,7 +370,7 @@ function createCommentItem(commentDoc) {
     function save() {
       const newText = editInput.value.trim();
       if (newText === "") {
-        alert("Please enter a comment before saving.");
+        alert("Please write something before saving.");
         return;
       }
       saveButton.disabled = true;
@@ -369,7 +385,8 @@ function createCommentItem(commentDoc) {
     saveButton.addEventListener("click", save);
     cancelButton.addEventListener("click", closeEditor);
     editInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
+      // In a big text box Enter makes a new line, so only one-line edits save on Enter
+      if (event.key === "Enter" && !multiline) {
         save();
       } else if (event.key === "Escape") {
         closeEditor();
@@ -389,8 +406,9 @@ function createCommentItem(commentDoc) {
     const deleteButton = document.createElement("button");
     deleteButton.textContent = "Delete";
     deleteButton.addEventListener("click", () => {
-      if (confirm("Delete this comment?")) {
-        tryTo("delete the comment", () => deleteDoc(commentDoc.ref));
+      const kind = multiline ? "note" : "comment";
+      if (confirm(`Delete this ${kind}?`)) {
+        tryTo(`delete the ${kind}`, () => deleteDoc(commentDoc.ref));
       }
     });
     view.appendChild(deleteButton);
@@ -407,28 +425,44 @@ function createCommentItem(commentDoc) {
   };
 }
 
-function createCommentSection(postRef) {
-  const commentsRef = collection(postRef, "comments");
+// Comments under a post. Book pages reuse this for their notes by passing
+// options (see showBookPage).
+function createCommentSection(postRef, options = {}) {
+  const {
+    collectionName = "comments",
+    className = "comments",
+    placeholder = "Write a comment",
+    buttonText = "Comment",
+    emptyMessage = "Please enter a comment before submitting.",
+    failureDescription = "post your comment",
+    multiline = false
+  } = options;
+  const commentsRef = collection(postRef, collectionName);
 
   const section = document.createElement("div");
-  section.className = "comments";
+  section.className = className;
 
   const commentsList = document.createElement("div");
   commentsList.className = "comments-list";
 
-  const commentInput = document.createElement("input");
-  commentInput.type = "text";
-  commentInput.placeholder = "Write a comment";
+  const commentInput = document.createElement(multiline ? "textarea" : "input");
+  if (multiline) {
+    commentInput.rows = 4;
+    commentInput.maxLength = 2000;
+  } else {
+    commentInput.type = "text";
+  }
+  commentInput.placeholder = placeholder;
 
   const commentButton = document.createElement("button");
-  commentButton.textContent = "Comment";
+  commentButton.textContent = buttonText;
 
   commentButton.addEventListener("click", () => {
     const comment = commentInput.value.trim();
     if (comment === "") {
-      alert("Please enter a comment before submitting.");
+      alert(emptyMessage);
     } else {
-      tryTo("post your comment", async () => {
+      tryTo(failureDescription, async () => {
         await addDoc(commentsRef, newComment(comment));
         commentInput.value = "";
       });
@@ -452,7 +486,7 @@ function createCommentSection(postRef) {
       }
 
       if (change.type === "added") {
-        items.set(id, createCommentItem(change.doc));
+        items.set(id, createCommentItem(change.doc, multiline));
       } else if (existing) {
         existing.element.remove();
         existing.update(change.doc);
@@ -464,8 +498,19 @@ function createCommentSection(postRef) {
   });
 
   section.appendChild(commentsList);
-  section.appendChild(commentInput);
-  section.appendChild(commentButton);
+  if (multiline) {
+    // Text box with the button underneath it, like the other writing boxes
+    const composer = document.createElement("div");
+    composer.className = "composer";
+    const buttons = document.createElement("div");
+    buttons.appendChild(commentButton);
+    composer.appendChild(commentInput);
+    composer.appendChild(buttons);
+    section.appendChild(composer);
+  } else {
+    section.appendChild(commentInput);
+    section.appendChild(commentButton);
+  }
   return { element: section, stopComments: stopComments };
 }
 
@@ -1042,6 +1087,437 @@ function setupPostSection(section) {
 
 sections.forEach(setupPostSection);
 
+// ---------- Books ----------
+// Books are shared with everyone. Typing a title looks up covers on Open Library
+// (free, no key needed). Each book has its own page at "#book/<id>" where people
+// can write notes about what they've read.
+
+const bookTitleInput = document.getElementById("book-title");
+const bookAuthorInput = document.getElementById("book-author");
+const bookSubmitButton = document.getElementById("book-submit");
+const coverPreview = document.getElementById("book-cover-preview");
+const coverPreviewImage = document.getElementById("book-cover-preview-image");
+const coverMatchText = document.getElementById("book-cover-match");
+const coverNextButton = document.getElementById("book-cover-next");
+const coverNoneButton = document.getElementById("book-cover-none");
+const coverStatus = document.getElementById("book-cover-status");
+const booksList = document.getElementById("books-list");
+const booksHeading = document.getElementById("books-heading");
+
+const bookPageContent = document.getElementById("book-page-content");
+const bookPageMissing = document.getElementById("book-page-missing");
+const bookPageCover = document.getElementById("book-page-cover");
+const bookPageTitle = document.getElementById("book-page-title");
+const bookPageAuthor = document.getElementById("book-page-author");
+const bookPageMeta = document.getElementById("book-page-meta");
+const bookDeleteButton = document.getElementById("book-delete");
+const bookBackButton = document.getElementById("book-back");
+const bookNotes = document.getElementById("book-notes");
+
+// How long to wait after the last key press before looking up a cover
+const COVER_SEARCH_DELAY_MS = 500;
+
+// Covers found for what's typed in the box, and which one is picked (-1 = no cover)
+let coverResults = [];
+let coverIndex = -1;
+let coverSearchTimer = null;
+let coverSearch = null;
+let coverSearchCount = 0;
+let coverSearchController = null;
+
+// The book whose page is open, and the function that stops its live listeners
+let openBookId = null;
+let stopBookPage = null;
+
+// The cover picture, or a plain box with the title if there's no cover
+// (or the picture fails to load)
+function createBookCover(coverUrl, title) {
+  function placeholder() {
+    const box = document.createElement("div");
+    box.className = "book-cover placeholder";
+    box.textContent = title || "No cover";
+    return box;
+  }
+  if (!coverUrl) {
+    return placeholder();
+  }
+  const image = document.createElement("img");
+  image.className = "book-cover";
+  image.src = coverUrl;
+  image.alt = `Cover of ${title}`;
+  image.loading = "lazy";
+  image.addEventListener("error", () => image.replaceWith(placeholder()), { once: true });
+  return image;
+}
+
+async function searchOpenLibrary(params, signal) {
+  params.set("limit", "15");
+  params.set("fields", "title,author_name,cover_i,first_publish_year");
+  const response = await fetch(`https://openlibrary.org/search.json?${params}`, { signal });
+  if (!response.ok) {
+    throw new Error(`Open Library answered with error ${response.status}`);
+  }
+  const data = await response.json();
+
+  // Keep only results that have a cover, and each cover only once
+  const seenCovers = new Set();
+  const results = [];
+  for (const book of data.docs || []) {
+    if (!book.cover_i || seenCovers.has(book.cover_i)) {
+      continue;
+    }
+    seenCovers.add(book.cover_i);
+    results.push({
+      title: book.title || "",
+      author: (book.author_name || []).slice(0, 2).join(", "),
+      year: book.first_publish_year || "",
+      coverUrl: `https://covers.openlibrary.org/b/id/${book.cover_i}-L.jpg`
+    });
+  }
+  return results;
+}
+
+// Looks the book up by title (and author, if given). If that finds nothing,
+// tries a looser search in case the title was typed a bit differently.
+async function findCovers(title, author, signal) {
+  const exact = new URLSearchParams({ title: title });
+  if (author) {
+    exact.set("author", author);
+  }
+  const results = await searchOpenLibrary(exact, signal);
+  if (results.length > 0) {
+    return results;
+  }
+  return await searchOpenLibrary(new URLSearchParams({ q: `${title} ${author}`.trim() }), signal);
+}
+
+function setCoverStatus(message) {
+  if (coverStatus) {
+    coverStatus.textContent = message;
+    coverStatus.hidden = message === "";
+  }
+}
+
+// Shows the picked cover (or the "no cover" box) under the title box
+function showCoverChoice() {
+  if (!coverPreview) {
+    return;
+  }
+  coverPreview.hidden = coverResults.length === 0;
+  if (coverResults.length === 0) {
+    return;
+  }
+
+  const title = bookTitleInput.value.trim();
+  if (coverIndex === -1) {
+    coverPreviewImage.replaceChildren(createBookCover("", title));
+    coverMatchText.textContent = "No cover. The book will show its title instead.";
+  } else {
+    const match = coverResults[coverIndex];
+    coverPreviewImage.replaceChildren(createBookCover(match.coverUrl, match.title));
+    const by = match.author ? ` by ${match.author}` : "";
+    const year = match.year ? ` (${match.year})` : "";
+    coverMatchText.textContent = `Cover from "${match.title}"${by}${year}`;
+  }
+
+  if (coverIndex === -1) {
+    coverNextButton.textContent = "Use a cover";
+    coverNextButton.hidden = false;
+  } else {
+    coverNextButton.textContent = `Try another cover (showing ${coverIndex + 1} of ${coverResults.length})`;
+    coverNextButton.hidden = coverResults.length < 2;
+  }
+  coverNoneButton.hidden = coverIndex === -1;
+}
+
+function resetCoverChoice() {
+  clearTimeout(coverSearchTimer);
+  coverSearchTimer = null;
+  if (coverSearchController) {
+    coverSearchController.abort();
+  }
+  coverSearchCount++;
+  coverSearch = null;
+  coverResults = [];
+  coverIndex = -1;
+  setCoverStatus("");
+  showCoverChoice();
+}
+
+// Looks up covers for what's typed in the boxes right now
+function runCoverSearch() {
+  clearTimeout(coverSearchTimer);
+  coverSearchTimer = null;
+  if (coverSearchController) {
+    coverSearchController.abort();
+  }
+
+  const title = bookTitleInput.value.trim();
+  const author = bookAuthorInput ? bookAuthorInput.value.trim() : "";
+  // Number this search, so an older, slower search can't overwrite a newer one
+  const searchNumber = ++coverSearchCount;
+  const controller = new AbortController();
+  coverSearchController = controller;
+  setCoverStatus("Looking for a cover…");
+
+  coverSearch = findCovers(title, author, controller.signal)
+    .then((results) => {
+      if (searchNumber !== coverSearchCount) {
+        return;
+      }
+      coverResults = results;
+      coverIndex = results.length > 0 ? 0 : -1;
+      setCoverStatus(results.length > 0
+        ? ""
+        : "Couldn't find a cover for this book. It will show its title instead.");
+      showCoverChoice();
+    })
+    .catch((error) => {
+      if (searchNumber !== coverSearchCount || error.name === "AbortError") {
+        return;
+      }
+      console.error(error);
+      coverResults = [];
+      coverIndex = -1;
+      setCoverStatus("Couldn't look up a cover right now. You can still add the book without one.");
+      showCoverChoice();
+    })
+    .finally(() => {
+      if (searchNumber === coverSearchCount) {
+        coverSearch = null;
+      }
+    });
+  return coverSearch;
+}
+
+function scheduleCoverSearch() {
+  clearTimeout(coverSearchTimer);
+  if (bookTitleInput.value.trim().length < 2) {
+    resetCoverChoice();
+    return;
+  }
+  setCoverStatus("Looking for a cover…");
+  coverSearchTimer = setTimeout(runCoverSearch, COVER_SEARCH_DELAY_MS);
+}
+
+async function addBook() {
+  const title = bookTitleInput.value.trim();
+  if (title === "") {
+    alert("Please enter the name of the book.");
+    return;
+  }
+
+  // If the cover lookup hasn't finished yet, wait for it so the book gets its cover
+  if (coverSearchTimer) {
+    await runCoverSearch();
+  } else if (coverSearch) {
+    await coverSearch;
+  }
+
+  const match = coverIndex === -1 ? null : coverResults[coverIndex];
+  const typedAuthor = bookAuthorInput ? bookAuthorInput.value.trim() : "";
+  const bookRef = await addDoc(collection(db, "books"), {
+    userId: userId,
+    name: userName,
+    title: title,
+    author: (typedAuthor || (match ? match.author : "")).slice(0, 150),
+    coverUrl: match ? match.coverUrl : "",
+    createdAt: serverTimestamp()
+  });
+
+  bookTitleInput.value = "";
+  if (bookAuthorInput) {
+    bookAuthorInput.value = "";
+  }
+  resetCoverChoice();
+  // Go straight to the new book's page so notes can be added
+  location.hash = `book/${bookRef.id}`;
+}
+
+function setupBooks() {
+  if (!bookTitleInput || !bookSubmitButton || !booksList) {
+    console.warn("Skipping setup for books because required elements are missing.");
+    return;
+  }
+
+  bookTitleInput.addEventListener("input", scheduleCoverSearch);
+  if (bookAuthorInput) {
+    bookAuthorInput.addEventListener("input", scheduleCoverSearch);
+  }
+
+  if (coverNextButton) {
+    coverNextButton.addEventListener("click", () => {
+      coverIndex = (coverIndex + 1) % coverResults.length;
+      showCoverChoice();
+    });
+  }
+  if (coverNoneButton) {
+    coverNoneButton.addEventListener("click", () => {
+      coverIndex = -1;
+      showCoverChoice();
+    });
+  }
+
+  bookSubmitButton.addEventListener("click", () => {
+    bookSubmitButton.disabled = true;
+    tryTo("add the book", addBook).finally(() => {
+      bookSubmitButton.disabled = false;
+    });
+  });
+
+  if (bookBackButton) {
+    bookBackButton.addEventListener("click", () => {
+      history.pushState(null, "", location.pathname + location.search);
+      route();
+    });
+  }
+
+  if (bookDeleteButton) {
+    bookDeleteButton.addEventListener("click", () => {
+      if (!openBookId || !confirm("Delete this book and all of its notes?")) {
+        return;
+      }
+      const bookRef = doc(db, "books", openBookId);
+      tryTo("delete the book", async () => {
+        // Firestore doesn't delete a book's notes along with it, so delete them too
+        const notes = await getDocs(collection(bookRef, "notes"));
+        const batch = writeBatch(db);
+        notes.forEach((note) => batch.delete(note.ref));
+        batch.delete(bookRef);
+        await batch.commit();
+        history.pushState(null, "", location.pathname + location.search);
+        route();
+      });
+    });
+  }
+}
+
+setupBooks();
+
+function createBookCard(bookDoc) {
+  const data = readData(bookDoc);
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "book-card";
+
+  const title = document.createElement("span");
+  title.className = "book-card-title";
+  title.textContent = data.title;
+
+  const details = document.createElement("span");
+  details.className = "meta";
+  details.textContent = data.author ? `${data.author} · added by ${data.name}` : `Added by ${data.name}`;
+
+  card.appendChild(createBookCover(data.coverUrl, data.title));
+  card.appendChild(title);
+  card.appendChild(details);
+  card.addEventListener("click", () => {
+    location.hash = `book/${bookDoc.id}`;
+  });
+  return card;
+}
+
+function listenToBooks() {
+  if (!booksList) {
+    return () => {};
+  }
+  const booksQuery = query(collection(db, "books"), orderBy("createdAt", "desc"));
+  return onSnapshot(booksQuery, (snapshot) => {
+    booksList.replaceChildren(...snapshot.docs.map(createBookCard));
+    if (booksHeading) {
+      booksHeading.hidden = snapshot.empty;
+    }
+  }, (error) => {
+    console.error("Couldn't load books:", error);
+  });
+}
+
+function bookIdFromHash() {
+  const match = location.hash.match(/^#book\/([A-Za-z0-9]+)$/);
+  return match ? match[1] : null;
+}
+
+function closeBookPage() {
+  if (stopBookPage) {
+    stopBookPage();
+    stopBookPage = null;
+  }
+  openBookId = null;
+  if (bookNotes) {
+    bookNotes.replaceChildren();
+  }
+}
+
+function showBookPage(bookId) {
+  if (!bookPageContent || !bookNotes) {
+    return;
+  }
+  closeBookPage();
+  openBookId = bookId;
+  switchPage("book-page");
+  window.scrollTo(0, 0);
+
+  bookPageContent.hidden = true;
+  bookPageMissing.hidden = true;
+
+  const bookRef = doc(db, "books", bookId);
+  const notes = createCommentSection(bookRef, {
+    collectionName: "notes",
+    className: "notes",
+    placeholder: "Write a note about what you read (a chapter, a quote, what you thought...)",
+    buttonText: "Add note",
+    emptyMessage: "Please write a note first.",
+    failureDescription: "add your note",
+    multiline: true
+  });
+  bookNotes.replaceChildren(notes.element);
+
+  const stopBook = onSnapshot(bookRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      bookPageContent.hidden = true;
+      bookPageMissing.hidden = false;
+      return;
+    }
+    const data = readData(snapshot);
+    bookPageCover.replaceChildren(createBookCover(data.coverUrl, data.title));
+    bookPageTitle.textContent = data.title;
+    bookPageAuthor.textContent = data.author ? `by ${data.author}` : "";
+    bookPageAuthor.hidden = !data.author;
+    updateMeta(bookPageMeta, `Added by ${data.name}`, data.createdAt);
+    bookDeleteButton.hidden = data.userId !== userId;
+    bookPageContent.hidden = false;
+    bookPageMissing.hidden = true;
+  }, (error) => {
+    console.error(error);
+    bookPageContent.hidden = true;
+    bookPageMissing.hidden = false;
+  });
+
+  stopBookPage = () => {
+    stopBook();
+    notes.stopComments();
+  };
+}
+
+// Opens the book named in the address ("#book/<id>"), or goes back to the
+// list of books when the address no longer names one (e.g. after pressing Back)
+function route() {
+  if (!userId) {
+    return;
+  }
+  const bookId = bookIdFromHash();
+  if (bookId) {
+    if (bookId !== openBookId) {
+      showBookPage(bookId);
+    }
+  } else if (openBookId || document.getElementById("book-page")?.classList.contains("active")) {
+    closeBookPage();
+    switchPage("books");
+  }
+}
+
+window.addEventListener("hashchange", route);
+
 function startListening() {
   sections.forEach((section) => {
     if (section.disabled) {
@@ -1050,11 +1526,19 @@ function startListening() {
     unsubscribers.push(listenToPosts(section));
     unsubscribers.push(listenToDrafts(section));
   });
+  unsubscribers.push(listenToBooks());
 }
 
 function stopListening() {
   unsubscribers.forEach((unsubscribe) => unsubscribe());
   unsubscribers = [];
+  closeBookPage();
+  if (booksList) {
+    booksList.replaceChildren();
+  }
+  if (booksHeading) {
+    booksHeading.hidden = true;
+  }
   sections.forEach((section) => {
     if (section.list) {
       section.list.replaceChildren();
@@ -1085,6 +1569,8 @@ function showSignedIn(user, name) {
     changePasswordToggle.hidden = false;
   }
   startListening();
+  // Open the book page if the address names one (e.g. a shared link)
+  route();
 }
 
 function showSignedOut() {

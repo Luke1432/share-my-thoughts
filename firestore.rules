@@ -13,6 +13,8 @@
 //   thoughts/{postId}                        -> { userId, name, title, text, imageDataUrl, createdAt }
 //   accomplishments/{postId}                 -> same as thoughts
 //   {thoughts|accomplishments}/{postId}/comments/{commentId} -> { userId, name, text, createdAt }
+//   books/{bookId}                           -> { userId, name, title, author, coverUrl, createdAt }
+//   books/{bookId}/notes/{noteId}            -> { userId, name, text, createdAt }
 
 rules_version = '2';
 service cloud.firestore {
@@ -129,6 +131,44 @@ service cloud.firestore {
         allow create: if isPostSection(section) && isValidNewComment();
         allow update: if isPostSection(section) && isValidEdit();
         allow delete: if isPostSection(section) && isUser(resource.data.userId);
+      }
+    }
+
+    // Cover pictures can only come from Open Library, so nobody can sneak in
+    // a link to some other site. Empty string means no cover.
+    function isValidCoverUrl(value) {
+      return value is string
+        && (value == '' || value.matches('^https://covers[.]openlibrary[.]org/b/id/[0-9]+-[SML][.]jpg$'));
+    }
+
+    function isValidNewBook() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['userId', 'name', 'title', 'author', 'coverUrl', 'createdAt'])
+        && isUser(data.userId)
+        && data.name == get(memberPath()).data.name
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 150
+        && data.author is string && data.author.size() <= 150
+        && isValidCoverUrl(data.coverUrl)
+        && data.createdAt == request.time;
+    }
+
+    // Books: any member can read and add them, only the person who added a
+    // book can delete it
+    match /books/{bookId} {
+      allow read: if isMember();
+      allow create: if isValidNewBook();
+      allow delete: if isUser(resource.data.userId);
+
+      // Notes on a book: any member can read and add them, only the author can
+      // edit them. The author or the book's owner can delete them (the owner
+      // needs to, so deleting a book can remove its notes).
+      match /notes/{noteId} {
+        allow read: if isMember();
+        allow create: if isValidNewComment()
+          && exists(/databases/$(database)/documents/books/$(bookId));
+        allow update: if isValidEdit();
+        allow delete: if isUser(resource.data.userId)
+          || isUser(get(/databases/$(database)/documents/books/$(bookId)).data.userId);
       }
     }
   }
