@@ -106,6 +106,56 @@
     resize: vertical;
 }
 
+/* The box (and button underneath) for writing or editing a comment or note */
+.comment-composer {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.comment-composer[hidden] {
+    display: none;
+}
+
+/* Comment and note boxes grow as you type: first wider, until they reach
+   900px (or the width of the screen on phones), then taller with no limit.
+   field-sizing does this without any JavaScript. */
+.grow-box {
+    font: inherit;
+    line-height: 1.4;
+    padding: 6px 8px;
+    box-sizing: border-box;
+    field-sizing: content;
+    min-width: min(100%, 350px);
+    max-width: min(100%, 900px);
+    min-height: 4.5em;
+    /* The box sizes itself, so there's no drag handle */
+    resize: none;
+}
+
+/* Notes on a book page start out bigger than comments */
+.grow-box.note-box {
+    min-width: min(100%, 500px);
+    min-height: 9em;
+}
+
+/* Browsers that don't have field-sizing yet (e.g. Firefox): the box is as
+   wide as it's allowed to be, and script.js (fitTextarea) makes it grow
+   taller as you type */
+@supports not (field-sizing: content) {
+    .grow-box {
+        width: 100%;
+        overflow-y: hidden;
+    }
+}
+
+/* Keep the line breaks people type in comments and notes */
+.comment-item p {
+    white-space: pre-wrap;
+}
+
 .editing-note {
     font-size: 0.85em;
     color: #6b5a40;
@@ -246,7 +296,7 @@
 }
 
 .notes {
-    max-width: 600px;
+    max-width: 900px;
 }
 
 .notes .comment-item {
@@ -254,9 +304,4 @@
     border-radius: 6px;
     padding: 10px;
     margin-bottom: 10px;
-}
-
-/* Keep the line breaks people type in their notes */
-.notes .comment-item p {
-    white-space: pre-wrap;
 }

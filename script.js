@@ -69,6 +69,30 @@ async function tryTo(description, action) {
   }
 }
 
+// ---------- Growing comment boxes ----------
+// style.css makes comment and note boxes (.grow-box) grow with their text using
+// field-sizing. Browsers without it (e.g. Firefox) get the growing height from
+// here instead. The writing boxes for posts aren't affected.
+
+const textareasSizeThemselves = CSS.supports("field-sizing", "content");
+
+function fitTextarea(textarea) {
+  if (textareasSizeThemselves || !textarea || !textarea.classList || !textarea.classList.contains("grow-box")) {
+    return;
+  }
+  // Shrinking the box for a moment can make the page jump, so keep the scroll position
+  const scrollY = window.scrollY;
+  textarea.style.height = "auto";
+  const borders = textarea.offsetHeight - textarea.clientHeight;
+  textarea.style.height = `${textarea.scrollHeight + borders}px`;
+  window.scrollTo(window.scrollX, scrollY);
+}
+
+// Listening on the whole page also covers boxes added later (edit boxes, notes)
+["input", "focusin"].forEach((eventName) => {
+  document.addEventListener(eventName, (event) => fitTextarea(event.target));
+});
+
 // ---------- Sign in ----------
 // You sign in with your name and your own password. Behind the scenes each
 // name gets its own Firebase account (the name is turned into a made-up email
@@ -322,8 +346,17 @@ function readData(snapshot) {
   return snapshot.data({ serverTimestamps: "estimate" });
 }
 
-// multiline: edit in a big text box (for book notes) instead of a one-line input
-function createCommentItem(commentDoc, multiline = false) {
+// A growing text box for writing a comment or note (see .grow-box in style.css).
+// Notes start out bigger than comments.
+function createGrowBox(kind) {
+  const box = document.createElement("textarea");
+  box.className = kind === "note" ? "grow-box note-box" : "grow-box";
+  box.maxLength = 2000;
+  return box;
+}
+
+// kind is "comment", or "note" on a book page
+function createCommentItem(commentDoc, kind = "comment") {
   const data = readData(commentDoc);
   let latestText = data.text;
   const commentItem = document.createElement("div");
@@ -340,16 +373,10 @@ function createCommentItem(commentDoc, multiline = false) {
 
   if (data.userId === userId) {
     const editor = document.createElement("div");
+    editor.className = "comment-composer";
     editor.hidden = true;
 
-    const editInput = document.createElement(multiline ? "textarea" : "input");
-    if (multiline) {
-      editInput.rows = 4;
-      editInput.maxLength = 2000;
-      editor.className = "composer";
-    } else {
-      editInput.type = "text";
-    }
+    const editInput = createGrowBox(kind);
     const saveButton = document.createElement("button");
     saveButton.textContent = "Save";
     const cancelButton = document.createElement("button");
@@ -374,7 +401,7 @@ function createCommentItem(commentDoc, multiline = false) {
         return;
       }
       saveButton.disabled = true;
-      tryTo("save the comment", async () => {
+      tryTo(`save the ${kind}`, async () => {
         await updateDoc(commentDoc.ref, { text: newText });
         closeEditor();
       }).finally(() => {
@@ -384,11 +411,9 @@ function createCommentItem(commentDoc, multiline = false) {
 
     saveButton.addEventListener("click", save);
     cancelButton.addEventListener("click", closeEditor);
+    // Enter makes a new line, so saving is the Save button. Escape cancels.
     editInput.addEventListener("keydown", (event) => {
-      // In a big text box Enter makes a new line, so only one-line edits save on Enter
-      if (event.key === "Enter" && !multiline) {
-        save();
-      } else if (event.key === "Escape") {
+      if (event.key === "Escape") {
         closeEditor();
       }
     });
@@ -399,6 +424,7 @@ function createCommentItem(commentDoc, multiline = false) {
       editInput.value = latestText;
       view.hidden = true;
       editor.hidden = false;
+      fitTextarea(editInput);
       editInput.focus();
     });
     view.appendChild(editButton);
@@ -406,7 +432,6 @@ function createCommentItem(commentDoc, multiline = false) {
     const deleteButton = document.createElement("button");
     deleteButton.textContent = "Delete";
     deleteButton.addEventListener("click", () => {
-      const kind = multiline ? "note" : "comment";
       if (confirm(`Delete this ${kind}?`)) {
         tryTo(`delete the ${kind}`, () => deleteDoc(commentDoc.ref));
       }
@@ -435,7 +460,7 @@ function createCommentSection(postRef, options = {}) {
     buttonText = "Comment",
     emptyMessage = "Please enter a comment before submitting.",
     failureDescription = "post your comment",
-    multiline = false
+    kind = "comment"
   } = options;
   const commentsRef = collection(postRef, collectionName);
 
@@ -445,13 +470,7 @@ function createCommentSection(postRef, options = {}) {
   const commentsList = document.createElement("div");
   commentsList.className = "comments-list";
 
-  const commentInput = document.createElement(multiline ? "textarea" : "input");
-  if (multiline) {
-    commentInput.rows = 4;
-    commentInput.maxLength = 2000;
-  } else {
-    commentInput.type = "text";
-  }
+  const commentInput = createGrowBox(kind);
   commentInput.placeholder = placeholder;
 
   const commentButton = document.createElement("button");
@@ -465,6 +484,7 @@ function createCommentSection(postRef, options = {}) {
       tryTo(failureDescription, async () => {
         await addDoc(commentsRef, newComment(comment));
         commentInput.value = "";
+        fitTextarea(commentInput);
       });
     }
   });
@@ -486,7 +506,7 @@ function createCommentSection(postRef, options = {}) {
       }
 
       if (change.type === "added") {
-        items.set(id, createCommentItem(change.doc, multiline));
+        items.set(id, createCommentItem(change.doc, kind));
       } else if (existing) {
         existing.element.remove();
         existing.update(change.doc);
@@ -498,19 +518,14 @@ function createCommentSection(postRef, options = {}) {
   });
 
   section.appendChild(commentsList);
-  if (multiline) {
-    // Text box with the button underneath it, like the other writing boxes
-    const composer = document.createElement("div");
-    composer.className = "composer";
-    const buttons = document.createElement("div");
-    buttons.appendChild(commentButton);
-    composer.appendChild(commentInput);
-    composer.appendChild(buttons);
-    section.appendChild(composer);
-  } else {
-    section.appendChild(commentInput);
-    section.appendChild(commentButton);
-  }
+  // Text box with the button underneath it
+  const composer = document.createElement("div");
+  composer.className = "comment-composer";
+  const buttons = document.createElement("div");
+  buttons.appendChild(commentButton);
+  composer.appendChild(commentInput);
+  composer.appendChild(buttons);
+  section.appendChild(composer);
   return { element: section, stopComments: stopComments };
 }
 
@@ -1468,7 +1483,7 @@ function showBookPage(bookId) {
     buttonText: "Add note",
     emptyMessage: "Please write a note first.",
     failureDescription: "add your note",
-    multiline: true
+    kind: "note"
   });
   bookNotes.replaceChildren(notes.element);
 
