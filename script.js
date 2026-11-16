@@ -49,11 +49,12 @@ function switchPage(pageId) {
 // switchPage. Instead each nav button names its page in a data-page attribute.
 document.querySelectorAll("nav button[data-page]").forEach((button) => {
   button.addEventListener("click", () => {
-    // Leaving a book's page: take "#book/..." off the address so it doesn't reopen
-    if (bookIdFromHash()) {
+    // Leaving a book's or article's page: take "#book/..." or "#article/..."
+    // off the address so it doesn't reopen
+    if (itemFromHash()) {
       history.pushState(null, "", location.pathname + location.search);
     }
-    closeBookPage();
+    closeItemPage();
     switchPage(button.dataset.page);
   });
 });
@@ -355,7 +356,7 @@ function createGrowBox(kind) {
   return box;
 }
 
-// kind is "comment", or "note" on a book page
+// kind is "comment", or "note" on a book or article page
 function createCommentItem(commentDoc, kind = "comment") {
   const data = readData(commentDoc);
   let latestText = data.text;
@@ -450,8 +451,8 @@ function createCommentItem(commentDoc, kind = "comment") {
   };
 }
 
-// Comments under a post. Book pages reuse this for their notes by passing
-// options (see showBookPage).
+// Comments under a post. Book and article pages reuse this for their notes by
+// passing options (see showItemPage).
 function createCommentSection(postRef, options = {}) {
   const {
     collectionName = "comments",
@@ -1105,7 +1106,7 @@ sections.forEach(setupPostSection);
 // ---------- Books ----------
 // Books are shared with everyone. Typing a title looks up covers on Open Library
 // (free, no key needed). Each book has its own page at "#book/<id>" where people
-// can write notes about what they've read.
+// can write notes about what they've read (see "Shelves" below).
 
 const bookTitleInput = document.getElementById("book-title");
 const bookAuthorInput = document.getElementById("book-author");
@@ -1119,15 +1120,10 @@ const coverStatus = document.getElementById("book-cover-status");
 const booksList = document.getElementById("books-list");
 const booksHeading = document.getElementById("books-heading");
 
-const bookPageContent = document.getElementById("book-page-content");
-const bookPageMissing = document.getElementById("book-page-missing");
 const bookPageCover = document.getElementById("book-page-cover");
 const bookPageTitle = document.getElementById("book-page-title");
 const bookPageAuthor = document.getElementById("book-page-author");
 const bookPageMeta = document.getElementById("book-page-meta");
-const bookDeleteButton = document.getElementById("book-delete");
-const bookBackButton = document.getElementById("book-back");
-const bookNotes = document.getElementById("book-notes");
 
 // How long to wait after the last key press before looking up a cover
 const COVER_SEARCH_DELAY_MS = 500;
@@ -1139,10 +1135,6 @@ let coverSearchTimer = null;
 let coverSearch = null;
 let coverSearchCount = 0;
 let coverSearchController = null;
-
-// The book whose page is open, and the function that stops its live listeners
-let openBookId = null;
-let stopBookPage = null;
 
 // The cover picture, or a plain box with the title if there's no cover
 // (or the picture fails to load)
@@ -1379,32 +1371,6 @@ function setupBooks() {
       bookSubmitButton.disabled = false;
     });
   });
-
-  if (bookBackButton) {
-    bookBackButton.addEventListener("click", () => {
-      history.pushState(null, "", location.pathname + location.search);
-      route();
-    });
-  }
-
-  if (bookDeleteButton) {
-    bookDeleteButton.addEventListener("click", () => {
-      if (!openBookId || !confirm("Delete this book and all of its notes?")) {
-        return;
-      }
-      const bookRef = doc(db, "books", openBookId);
-      tryTo("delete the book", async () => {
-        // Firestore doesn't delete a book's notes along with it, so delete them too
-        const notes = await getDocs(collection(bookRef, "notes"));
-        const batch = writeBatch(db);
-        notes.forEach((note) => batch.delete(note.ref));
-        batch.delete(bookRef);
-        await batch.commit();
-        history.pushState(null, "", location.pathname + location.search);
-        route();
-      });
-    });
-  }
 }
 
 setupBooks();
@@ -1432,102 +1398,329 @@ function createBookCard(bookDoc) {
   return card;
 }
 
-function listenToBooks() {
-  if (!booksList) {
-    return () => {};
+// Fills in the top of a book's page
+function showBookDetails(data) {
+  bookPageCover.replaceChildren(createBookCover(data.coverUrl, data.title));
+  bookPageTitle.textContent = data.title;
+  bookPageAuthor.textContent = data.author ? `by ${data.author}` : "";
+  bookPageAuthor.hidden = !data.author;
+  updateMeta(bookPageMeta, `Added by ${data.name}`, data.createdAt);
+}
+
+// ---------- Articles ----------
+// Articles are shared with everyone, like books. They don't have covers, so
+// they're shown as a list of titles with the site they're from. Each article
+// has its own page at "#article/<id>" with a link to it and notes.
+
+const articleUrlInput = document.getElementById("article-url");
+const articleTitleInput = document.getElementById("article-title");
+const articleSubmitButton = document.getElementById("article-submit");
+const articlesList = document.getElementById("articles-list");
+const articlesHeading = document.getElementById("articles-heading");
+
+const articlePageTitle = document.getElementById("article-page-title");
+const articlePageLink = document.getElementById("article-page-link");
+const articlePageMeta = document.getElementById("article-page-meta");
+
+// Must match the limit in firestore.rules
+const MAX_ARTICLE_URL_LENGTH = 500;
+
+// Turns a pasted link into a web address, or null if it isn't one. Only http
+// and https links are allowed, so nobody can save a "javascript:" link.
+// "example.com/story" works too: https:// is added for you.
+function parseArticleUrl(value) {
+  let text = (value || "").trim();
+  if (text === "") {
+    return null;
   }
-  const booksQuery = query(collection(db, "books"), orderBy("createdAt", "desc"));
-  return onSnapshot(booksQuery, (snapshot) => {
-    booksList.replaceChildren(...snapshot.docs.map(createBookCard));
-    if (booksHeading) {
-      booksHeading.hidden = snapshot.empty;
-    }
-  }, (error) => {
-    console.error("Couldn't load books:", error);
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(text)) {
+    text = `https://${text}`;
+  }
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    return null;
+  }
+  if ((url.protocol !== "https:" && url.protocol !== "http:") || !url.hostname.includes(".")) {
+    return null;
+  }
+  return url;
+}
+
+// The site an article is from, e.g. "nytimes.com"
+function siteName(url) {
+  return url.hostname.replace(/^www\./, "").slice(0, 100);
+}
+
+async function addArticle() {
+  const url = parseArticleUrl(articleUrlInput.value);
+  if (!url) {
+    alert("Please paste the full link to the article, like https://example.com/story.");
+    return;
+  }
+  if (url.href.length > MAX_ARTICLE_URL_LENGTH) {
+    alert(`That link is too long to save (${MAX_ARTICLE_URL_LENGTH} characters at most).`);
+    return;
+  }
+  const title = articleTitleInput.value.trim();
+  if (title === "") {
+    alert("Please give the article a title.");
+    return;
+  }
+
+  const articleRef = await addDoc(collection(db, "articles"), {
+    userId: userId,
+    name: userName,
+    title: title,
+    url: url.href,
+    source: siteName(url),
+    createdAt: serverTimestamp()
+  });
+
+  articleUrlInput.value = "";
+  articleTitleInput.value = "";
+  // Go straight to the new article's page so notes can be added
+  location.hash = `article/${articleRef.id}`;
+}
+
+function setupArticles() {
+  if (!articleUrlInput || !articleTitleInput || !articleSubmitButton || !articlesList) {
+    console.warn("Skipping setup for articles because required elements are missing.");
+    return;
+  }
+  articleSubmitButton.addEventListener("click", () => {
+    articleSubmitButton.disabled = true;
+    tryTo("add the article", addArticle).finally(() => {
+      articleSubmitButton.disabled = false;
+    });
   });
 }
 
-function bookIdFromHash() {
-  const match = location.hash.match(/^#book\/([A-Za-z0-9]+)$/);
-  return match ? match[1] : null;
+setupArticles();
+
+function createArticleCard(articleDoc) {
+  const data = readData(articleDoc);
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "article-card";
+
+  const title = document.createElement("span");
+  title.className = "article-card-title";
+  title.textContent = data.title;
+
+  const details = document.createElement("span");
+  details.className = "meta";
+  const source = data.source ? `${data.source} · ` : "";
+  details.textContent = `${source}added by ${data.name} · ${formatTime(data.createdAt)}`;
+
+  card.appendChild(title);
+  card.appendChild(details);
+  card.addEventListener("click", () => {
+    location.hash = `article/${articleDoc.id}`;
+  });
+  return card;
 }
 
-function closeBookPage() {
-  if (stopBookPage) {
-    stopBookPage();
-    stopBookPage = null;
+// Fills in the top of an article's page
+function showArticleDetails(data) {
+  articlePageTitle.textContent = data.title;
+  // Checked again here so an odd link saved some other way never becomes clickable
+  const url = parseArticleUrl(data.url);
+  articlePageLink.hidden = !url;
+  if (url) {
+    articlePageLink.href = url.href;
+    articlePageLink.textContent = `Read it on ${data.source || siteName(url)} ↗`;
+  } else {
+    articlePageLink.removeAttribute("href");
   }
-  openBookId = null;
-  if (bookNotes) {
-    bookNotes.replaceChildren();
+  updateMeta(articlePageMeta, `Added by ${data.name}`, data.createdAt);
+}
+
+// ---------- Shelves ----------
+// Books and articles work the same way: everyone shares one list, and each
+// item has its own page ("#book/<id>", "#article/<id>") with notes anyone can
+// add. A shelf describes one of them, so the code below works for both.
+
+const shelves = [
+  {
+    collectionName: "books",
+    hashName: "book",
+    noun: "book",
+    listPageId: "books",
+    itemPageId: "book-page",
+    list: booksList,
+    heading: booksHeading,
+    content: document.getElementById("book-page-content"),
+    missing: document.getElementById("book-page-missing"),
+    deleteButton: document.getElementById("book-delete"),
+    backButton: document.getElementById("book-back"),
+    notes: document.getElementById("book-notes"),
+    notePlaceholder: "Write a note about what you read (a chapter, a quote, what you thought...)",
+    createCard: createBookCard,
+    showDetails: showBookDetails
+  },
+  {
+    collectionName: "articles",
+    hashName: "article",
+    noun: "article",
+    listPageId: "articles",
+    itemPageId: "article-page",
+    list: articlesList,
+    heading: articlesHeading,
+    content: document.getElementById("article-page-content"),
+    missing: document.getElementById("article-page-missing"),
+    deleteButton: document.getElementById("article-delete"),
+    backButton: document.getElementById("article-back"),
+    notes: document.getElementById("article-notes"),
+    notePlaceholder: "Write a note about the article (a quote, what you thought, what to read next...)",
+    createCard: createArticleCard,
+    showDetails: showArticleDetails
+  }
+];
+
+// The book or article whose page is open ({ shelf, id }), and the function
+// that stops its live listeners
+let openItem = null;
+let stopItemPage = null;
+
+function leaveItemAddress() {
+  history.pushState(null, "", location.pathname + location.search);
+  route();
+}
+
+function setupShelfPage(shelf) {
+  if (shelf.backButton) {
+    shelf.backButton.addEventListener("click", leaveItemAddress);
+  }
+  if (shelf.deleteButton) {
+    shelf.deleteButton.addEventListener("click", () => {
+      if (!openItem || openItem.shelf !== shelf
+          || !confirm(`Delete this ${shelf.noun} and all of its notes?`)) {
+        return;
+      }
+      const itemRef = doc(db, shelf.collectionName, openItem.id);
+      tryTo(`delete the ${shelf.noun}`, async () => {
+        // Firestore doesn't delete the notes along with it, so delete them too
+        const notes = await getDocs(collection(itemRef, "notes"));
+        const batch = writeBatch(db);
+        notes.forEach((note) => batch.delete(note.ref));
+        batch.delete(itemRef);
+        await batch.commit();
+        leaveItemAddress();
+      });
+    });
   }
 }
 
-function showBookPage(bookId) {
-  if (!bookPageContent || !bookNotes) {
+shelves.forEach(setupShelfPage);
+
+function listenToShelf(shelf) {
+  if (!shelf.list) {
+    return () => {};
+  }
+  const shelfQuery = query(collection(db, shelf.collectionName), orderBy("createdAt", "desc"));
+  return onSnapshot(shelfQuery, (snapshot) => {
+    shelf.list.replaceChildren(...snapshot.docs.map(shelf.createCard));
+    if (shelf.heading) {
+      shelf.heading.hidden = snapshot.empty;
+    }
+  }, (error) => {
+    console.error(`Couldn't load ${shelf.collectionName}:`, error);
+  });
+}
+
+// The book or article named in the address, e.g. "#article/<id>"
+function itemFromHash() {
+  const match = location.hash.match(/^#([a-z]+)\/([A-Za-z0-9]+)$/);
+  if (!match) {
+    return null;
+  }
+  const shelf = shelves.find((candidate) => candidate.hashName === match[1]);
+  return shelf ? { shelf: shelf, id: match[2] } : null;
+}
+
+function closeItemPage() {
+  if (stopItemPage) {
+    stopItemPage();
+    stopItemPage = null;
+  }
+  openItem = null;
+  shelves.forEach((shelf) => {
+    if (shelf.notes) {
+      shelf.notes.replaceChildren();
+    }
+  });
+}
+
+function showItemPage(shelf, id) {
+  if (!shelf.content || !shelf.notes) {
     return;
   }
-  closeBookPage();
-  openBookId = bookId;
-  switchPage("book-page");
+  closeItemPage();
+  openItem = { shelf: shelf, id: id };
+  switchPage(shelf.itemPageId);
   window.scrollTo(0, 0);
 
-  bookPageContent.hidden = true;
-  bookPageMissing.hidden = true;
+  shelf.content.hidden = true;
+  shelf.missing.hidden = true;
 
-  const bookRef = doc(db, "books", bookId);
-  const notes = createCommentSection(bookRef, {
+  const itemRef = doc(db, shelf.collectionName, id);
+  const notes = createCommentSection(itemRef, {
     collectionName: "notes",
     className: "notes",
-    placeholder: "Write a note about what you read (a chapter, a quote, what you thought...)",
+    placeholder: shelf.notePlaceholder,
     buttonText: "Add note",
     emptyMessage: "Please write a note first.",
     failureDescription: "add your note",
     kind: "note"
   });
-  bookNotes.replaceChildren(notes.element);
+  shelf.notes.replaceChildren(notes.element);
 
-  const stopBook = onSnapshot(bookRef, (snapshot) => {
+  function showMissing() {
+    shelf.content.hidden = true;
+    shelf.missing.hidden = false;
+  }
+
+  const stopItem = onSnapshot(itemRef, (snapshot) => {
     if (!snapshot.exists()) {
-      bookPageContent.hidden = true;
-      bookPageMissing.hidden = false;
+      showMissing();
       return;
     }
     const data = readData(snapshot);
-    bookPageCover.replaceChildren(createBookCover(data.coverUrl, data.title));
-    bookPageTitle.textContent = data.title;
-    bookPageAuthor.textContent = data.author ? `by ${data.author}` : "";
-    bookPageAuthor.hidden = !data.author;
-    updateMeta(bookPageMeta, `Added by ${data.name}`, data.createdAt);
-    bookDeleteButton.hidden = data.userId !== userId;
-    bookPageContent.hidden = false;
-    bookPageMissing.hidden = true;
+    shelf.showDetails(data);
+    shelf.deleteButton.hidden = data.userId !== userId;
+    shelf.content.hidden = false;
+    shelf.missing.hidden = true;
   }, (error) => {
     console.error(error);
-    bookPageContent.hidden = true;
-    bookPageMissing.hidden = false;
+    showMissing();
   });
 
-  stopBookPage = () => {
-    stopBook();
+  stopItemPage = () => {
+    stopItem();
     notes.stopComments();
   };
 }
 
-// Opens the book named in the address ("#book/<id>"), or goes back to the
-// list of books when the address no longer names one (e.g. after pressing Back)
+// Opens the book or article named in the address, or goes back to its list
+// when the address no longer names one (e.g. after pressing Back)
 function route() {
   if (!userId) {
     return;
   }
-  const bookId = bookIdFromHash();
-  if (bookId) {
-    if (bookId !== openBookId) {
-      showBookPage(bookId);
+  const item = itemFromHash();
+  if (item) {
+    if (!openItem || openItem.shelf !== item.shelf || openItem.id !== item.id) {
+      showItemPage(item.shelf, item.id);
     }
-  } else if (openBookId || document.getElementById("book-page")?.classList.contains("active")) {
-    closeBookPage();
-    switchPage("books");
+    return;
+  }
+  const shelf = shelves.find((candidate) => (openItem && openItem.shelf === candidate)
+    || document.getElementById(candidate.itemPageId)?.classList.contains("active"));
+  if (shelf) {
+    closeItemPage();
+    switchPage(shelf.listPageId);
   }
 }
 
@@ -1541,19 +1734,23 @@ function startListening() {
     unsubscribers.push(listenToPosts(section));
     unsubscribers.push(listenToDrafts(section));
   });
-  unsubscribers.push(listenToBooks());
+  shelves.forEach((shelf) => {
+    unsubscribers.push(listenToShelf(shelf));
+  });
 }
 
 function stopListening() {
   unsubscribers.forEach((unsubscribe) => unsubscribe());
   unsubscribers = [];
-  closeBookPage();
-  if (booksList) {
-    booksList.replaceChildren();
-  }
-  if (booksHeading) {
-    booksHeading.hidden = true;
-  }
+  closeItemPage();
+  shelves.forEach((shelf) => {
+    if (shelf.list) {
+      shelf.list.replaceChildren();
+    }
+    if (shelf.heading) {
+      shelf.heading.hidden = true;
+    }
+  });
   sections.forEach((section) => {
     if (section.list) {
       section.list.replaceChildren();
@@ -1584,7 +1781,7 @@ function showSignedIn(user, name) {
     changePasswordToggle.hidden = false;
   }
   startListening();
-  // Open the book page if the address names one (e.g. a shared link)
+  // Open the book or article page if the address names one (e.g. a shared link)
   route();
 }
 

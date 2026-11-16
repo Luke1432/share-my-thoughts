@@ -29,6 +29,7 @@
             <button data-page="accomplishments">Accomplishments</button>
             <button data-page="memories">Memories</button>
             <button data-page="books">Books</button>
+            <button data-page="articles">Articles</button>
             <button data-page="group-activities">Group Activities</button>
         </nav>
         <p id="greeting"></p>
@@ -169,6 +170,34 @@
                 <div id="book-notes"></div>
             </div>
         </div>
+        <div id="articles" class="page">
+            <h2>Articles</h2>
+            <p>Share an article you've read or want others to read. Paste its link and give it a title. Click an article to open its own page, where everyone can keep notes about it.</p>
+            <div class="composer">
+                <input type="url" id="article-url" placeholder="Link to the article (https://...)" maxlength="500">
+                <input type="text" id="article-title" placeholder="Title of the article" maxlength="150">
+                <div>
+                    <button id="article-submit">Add article</button>
+                </div>
+            </div>
+            <h3 id="articles-heading" hidden>Articles (everyone can see these)</h3>
+            <div id="articles-list" class="articles-list"></div>
+        </div>
+        <div id="article-page" class="page">
+            <button id="article-back" type="button">&larr; Back to articles</button>
+            <p id="article-page-missing" hidden>This article couldn't be found. It may have been deleted.</p>
+            <div id="article-page-content" hidden>
+                <div class="article-header">
+                    <h2 id="article-page-title"></h2>
+                    <p><a id="article-page-link" target="_blank" rel="noopener noreferrer"></a></p>
+                    <div id="article-page-meta" class="meta"></div>
+                    <button id="article-delete" type="button" hidden>Delete article</button>
+                </div>
+                <h3>Notes</h3>
+                <p class="hint">Notes about the article. Everyone can see them and add their own.</p>
+                <div id="article-notes"></div>
+            </div>
+        </div>
         <div id="group-activities" class="page">
             <h2>Group Activities</h2>
             <p>Here, you can share some ideas for things you want to do as a group, whether it be a project or an activity, wherever it is. </p>
@@ -188,23 +217,6 @@
             <h3 id="group-activities-heading" hidden>Posts (everyone can see these)</h3>
             <div id="group-activities-list"></div>
         </div>
-        <div id="books" class="page">
-            <h2>Books</h2>
-            <p>Here, you can share some books that you have read or are currently reading, and what you think about them. This is a good way to share recommendations and to find new books to read. </p>
-            <div class="composer">
-                <p id="book-editing" class="editing-note" hidden>
-                    <span class="editing-text">Editing a saved draft. "Save draft" updates it, "Post" shares it.</span>
-                    <button id="book-stop-editing">Stop editing</button>
-                </p>
-                <input type="text" id="book-title" placeholder="Title (optional)" maxlength="150">
-                <textarea id="book-input" placeholder="Share a book here" rows="5" maxlength="2000"></textarea>
-                <div>
-                    <button id="book-submit">Post</button>
-                    <button id="book-save-draft">Save draft</button>
-                </div>
-            </div>
-            <div id="book-drafts" class="drafts-list"></div>
-            <h3 id="books-heading" hidden>Posts (everyone can see these)</h3>
-            <div id="books-list"></div>
     </main>
+</body>
 </html>

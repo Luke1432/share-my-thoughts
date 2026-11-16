@@ -15,6 +15,8 @@
 //   {thoughts|accomplishments}/{postId}/comments/{commentId} -> { userId, name, text, createdAt }
 //   books/{bookId}                           -> { userId, name, title, author, coverUrl, createdAt }
 //   books/{bookId}/notes/{noteId}            -> { userId, name, text, createdAt }
+//   articles/{articleId}                     -> { userId, name, title, url, source, createdAt }
+//   articles/{articleId}/notes/{noteId}      -> { userId, name, text, createdAt }
 
 rules_version = '2';
 service cloud.firestore {
@@ -169,6 +171,43 @@ service cloud.firestore {
         allow update: if isValidEdit();
         allow delete: if isUser(resource.data.userId)
           || isUser(get(/databases/$(database)/documents/books/$(bookId)).data.userId);
+      }
+    }
+
+    // Article links must be normal web addresses (http or https), so nobody
+    // can save a "javascript:" link that runs code when clicked
+    function isValidArticleUrl(value) {
+      return value is string
+        && value.size() <= 500
+        && value.matches('^https?://[^\\s]+$');
+    }
+
+    function isValidNewArticle() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['userId', 'name', 'title', 'url', 'source', 'createdAt'])
+        && isUser(data.userId)
+        && data.name == get(memberPath()).data.name
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 150
+        && isValidArticleUrl(data.url)
+        && data.source is string && data.source.size() <= 100
+        && data.createdAt == request.time;
+    }
+
+    // Articles work like books: any member can read and add them, only the
+    // person who added one can delete it
+    match /articles/{articleId} {
+      allow read: if isMember();
+      allow create: if isValidNewArticle();
+      allow delete: if isUser(resource.data.userId);
+
+      // Notes on an article, same rules as notes on a book
+      match /notes/{noteId} {
+        allow read: if isMember();
+        allow create: if isValidNewComment()
+          && exists(/databases/$(database)/documents/articles/$(articleId));
+        allow update: if isValidEdit();
+        allow delete: if isUser(resource.data.userId)
+          || isUser(get(/databases/$(database)/documents/articles/$(articleId)).data.userId);
       }
     }
   }

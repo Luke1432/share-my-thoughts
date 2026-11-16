@@ -295,6 +295,49 @@
     margin-top: 0;
 }
 
+/* ---------- Articles ---------- */
+
+.articles-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 900px;
+    margin-top: 15px;
+}
+
+/* Each article in the list is a button that opens its page */
+.article-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #b8a688;
+    border-radius: 6px;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.article-card:hover,
+.article-card:focus-visible {
+    border-color: #6b5a40;
+}
+
+.article-card-title {
+    font-weight: bold;
+    overflow-wrap: anywhere;
+}
+
+.article-header {
+    margin: 12px 0;
+}
+
+.article-header h2 {
+    margin-top: 0;
+    overflow-wrap: anywhere;
+}
+
 .notes {
     max-width: 900px;
 }
