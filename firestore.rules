@@ -175,11 +175,12 @@ service cloud.firestore {
     }
 
     // Article links must be normal web addresses (http or https), so nobody
-    // can save a "javascript:" link that runs code when clicked
+    // can save a "javascript:" link that runs code when clicked. [!-~] means
+    // any printable character except a space; script.js saves links in that form.
     function isValidArticleUrl(value) {
       return value is string
         && value.size() <= 500
-        && value.matches('^https?://[^\\s]+$');
+        && value.matches('^https?://[!-~]+$');
     }
 
     function isValidNewArticle() {
